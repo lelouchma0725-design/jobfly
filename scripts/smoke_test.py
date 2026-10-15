@@ -52,7 +52,7 @@ def main() -> None:
     check("healthz", r.status_code == 200 and r.json().get("status") == "ok", r.text[:100])
 
     # 2. 註冊隨機用戶（若項目要求郵箱確認，降級用管理員帳號繼續）
-    email = f"smoke-{uuid.uuid4().hex[:10]}@jobfly.test"
+    email = f"smoke-{uuid.uuid4().hex[:10]}@jobflysmoke.com"
     token = None
     r = c.post("/api/auth/signup", json={"email": email, "password": "Smoke123456!"})
     if r.status_code == 200 and r.json().get("status") == "ok":
