@@ -34,7 +34,7 @@ def list_applications(user: CurrentUser, db: DB, status: str | None = None) -> l
             JOIN job_postings p ON p.id = a.posting_id
             LEFT JOIN job_matches m ON m.id = a.match_id
             LEFT JOIN resume_versions rv ON rv.id = a.resume_version_id
-            WHERE a.user_id = :uid AND (CAST(:st AS text) IS NULL OR a.status = :st)
+            WHERE a.user_id = :uid AND (CAST(:st AS text) IS NULL OR CAST(a.status AS text) = :st)
             ORDER BY a.created_at DESC LIMIT 200
             """
         ),
