@@ -97,6 +97,40 @@ def refresh(payload: RefreshRequest) -> dict:
     return resp.json()
 
 
+class AdminCreate(BaseModel):
+    email: str
+    password: str
+    secret: str
+
+
+@router.post("/admin-create")
+def admin_create(payload: AdminCreate) -> dict:
+    """維護端點：用 service_role 走 GoTrue 管理 API 正規創建用戶（含郵箱確認）。
+
+    僅供管理員運維使用，secret 由 OPS_SECRET 環境變量保護。
+    """
+    if not settings.ops_secret or payload.secret != settings.ops_secret:
+        raise HTTPException(403, "forbidden")
+    try:
+        resp = httpx.post(
+            f"{_SB}/auth/v1/admin/users",
+            headers={
+                "apikey": settings.supabase_service_role_key,
+                "Authorization": f"Bearer {settings.supabase_service_role_key}",
+                "Content-Type": "application/json",
+            },
+            json={"email": payload.email, "password": payload.password, "email_confirm": True},
+            timeout=25,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"無法連接 Supabase Auth: {exc}") from exc
+    try:
+        body = resp.json()
+    except Exception:  # noqa: BLE001
+        body = resp.text[:300]
+    return {"status": resp.status_code, "body": body}
+
+
 def _err(resp: httpx.Response) -> str:
     try:
         return resp.json().get("msg") or resp.json().get("error_description") or resp.text[:300]

@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     # 管理員郵箱（逗號分隔；登錄時自動提升為 admin）
     admin_emails: str = ""
 
+    # 運維密鑰（/api/auth/admin-create 等維護端點）
+    ops_secret: str = ""
+
     @property
     def admin_email_list(self) -> list[str]:
         return [e.strip().lower() for e in self.admin_emails.split(",") if e.strip()]
