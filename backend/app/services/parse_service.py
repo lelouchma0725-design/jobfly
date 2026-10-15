@@ -6,6 +6,7 @@ import logging
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.jsonutil import j
 from app.core.llm import chat_json
 from app.services.parsing import extract_text, ocr_image
 
@@ -82,7 +83,7 @@ def parse_document(db: Session, doc_id: str, user_id: str, storage_path: str, mi
                     WHERE id=:id
                     """
                 ),
-                {"id": doc_id, "txt": text, "sj": structured},
+                {"id": doc_id, "txt": text, "sj": j(structured)},
             )
             if doc_type == "resume":
                 _create_resume_version(db, doc_id, user_id, text, structured)

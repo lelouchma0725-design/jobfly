@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.apply import base as apply_base
 from app.config import settings as app_settings
 from app.core.audit import log_audit
+from app.core.jsonutil import j
 from app.services.form_mapping import build_candidate_payload, missing_fields
 from app.services.notifier import notify_with_fallback
 from app.services.optimize import (
@@ -368,7 +369,7 @@ def _create_manual_task(db: Session, app: dict, application_id: str, blocker: di
         ),
         {
             "uid": app["user_id"], "aid": application_id, "tt": blocker["task_type"],
-            "q": blocker["question"], "opt": blocker.get("options"),
+            "q": blocker["question"], "opt": j(blocker.get("options")),
             "shot": blocker.get("screenshot_path"),
         },
     ).mappings().one()
@@ -459,7 +460,7 @@ def answer_and_resume(db: Session, task_id: str, user_id: str, answer: dict | No
             "UPDATE manual_tasks SET status='answered', answered_at=now(), answer=CAST(:a AS jsonb) "
             "WHERE id=:id"
         ),
-        {"id": task_id, "a": answer or {}},
+        {"id": task_id, "a": j(answer or {})},
     )
     # 回填內容注入投遞上下文：answer 中與 payload 同名字段直接覆蓋
     db.execute(

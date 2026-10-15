@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import log_audit
 from app.core.auth import get_current_user
+from app.core.jsonutil import j
 from app.db import get_db
 from app.schemas.accounts import PLATFORMS, WatchedCompanyCreate, WatchedCompanyUpdate
 
@@ -60,7 +61,7 @@ def create_company(
         {
             "uid": user["id"],
             "name": payload.company_name,
-            "aliases": payload.aliases or [],
+            "aliases": j(payload.aliases or []),
             "url": payload.careers_url,
             "platform": payload.platform,
             "notes": payload.notes,
@@ -78,7 +79,7 @@ def update_company(
 ) -> dict:
     fields = payload.model_dump(exclude_none=True)
     if "aliases" in fields:
-        fields["aliases"] = fields["aliases"] or []
+        fields["aliases"] = j(fields["aliases"] or [])
     sets = ", ".join(f"{k} = CAST(:{k} AS jsonb)" if k == "aliases" else f"{k} = :{k}"
                      for k in fields)
     result = db.execute(

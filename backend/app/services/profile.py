@@ -4,6 +4,7 @@ from __future__ import annotations
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.jsonutil import j
 from app.core.llm import chat_json
 
 _PROFILE_SYSTEM = """
@@ -68,11 +69,11 @@ def generate_profile(db: Session, user_id: str, resume_version_id: str | None = 
             "uid": user_id,
             "rv": row["id"],
             "summary": profile.get("summary"),
-            "skills": profile.get("skills") or [],
-            "exp": profile.get("experiences") or [],
-            "edu": profile.get("education") or [],
-            "hf": profile.get("hard_facts") or {},
-            "roles": profile.get("suggested_roles") or [],
+            "skills": j(profile.get("skills") or []),
+            "exp": j(profile.get("experiences") or []),
+            "edu": j(profile.get("education") or []),
+            "hf": j(profile.get("hard_facts") or {}),
+            "roles": j(profile.get("suggested_roles") or []),
             "model": "deepseek-chat",  # TODO: 從 settings 讀取
         },
     ).mappings().one()

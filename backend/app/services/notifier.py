@@ -15,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.core.jsonutil import j
 from app.core.security import decrypt_field, get_dek_for_user
 
 logger = logging.getLogger(__name__)
@@ -100,7 +101,7 @@ def notify(
             """
         ),
         {"uid": user_id, "ch": channel, "kind": kind, "t": title, "c": content,
-         "m": meta or {}},
+         "m": j(meta or {})},
     ).mappings().one()
     note_id = str(row["id"])
     try:

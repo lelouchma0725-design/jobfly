@@ -6,6 +6,8 @@ import logging
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.jsonutil import j
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,7 +33,7 @@ def log_audit(
                 "action": action,
                 "e": entity,
                 "eid": entity_id,
-                "meta": meta or {},
+                "meta": j(meta or {}),
                 "ip": ip,
             },
         )

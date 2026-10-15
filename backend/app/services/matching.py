@@ -9,6 +9,7 @@ from __future__ import annotations
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.jsonutil import j
 from app.core.llm import chat_json
 
 _HARD_SYSTEM = """
@@ -96,7 +97,7 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
                   SET hard_failures=EXCLUDED.hard_failures, status='hard_failed', updated_at=now()
                 """
             ),
-            {"uid": user_id, "pid": posting_id, "pv": profile["id"], "hf": failures},
+            {"uid": user_id, "pid": posting_id, "pv": profile["id"], "hf": j(failures)},
         )
         db.commit()
         return {"match_score": None, "hard_failures": failures, "status": "hard_failed"}
@@ -129,8 +130,8 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
             "pid": posting_id,
             "pv": profile["id"],
             "score": int(scored["match_score"]),
-            "bd": scored.get("breakdown") or {},
-            "reasons": scored.get("reasons") or [],
+            "bd": j(scored.get("breakdown") or {}),
+            "reasons": j(scored.get("reasons") or []),
         },
     )
     db.commit()

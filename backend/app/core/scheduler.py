@@ -14,6 +14,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import text
 
 from app.collectors.pipeline import collect_all_users
+from app.core.jsonutil import j
 from app.db import get_engine
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ def _job_collect() -> None:
                 "UPDATE collect_jobs SET status='done', finished_at=now(), payload=CAST(:p AS jsonb) "
                 "WHERE kind='collect' AND status='running' AND finished_at IS NULL"
             ),
-            {"p": report},
+            {"p": j(report)},
         )
         db.commit()
         logger.info("每日採集完成: %s", report)
