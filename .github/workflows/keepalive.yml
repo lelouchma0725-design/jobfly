@@ -1,0 +1,23 @@
+name: keepalive
+
+# 每 5 分鐘 ping 生產後端：
+# - 防止 Render 免費實例休眠（冷啟動 502）
+# - 後端每 6h 心跳查庫，防止 Supabase Free 因無活動暫停
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping backend healthz
+        run: |
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 https://jobfly-backend.onrender.com/healthz)
+            echo "healthz: $code"
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 10
+          done
+          exit 1
