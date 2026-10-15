@@ -6,6 +6,7 @@
 import base64
 import os
 import subprocess
+import time
 
 import httpx
 
@@ -17,6 +18,30 @@ api = httpx.Client(
     headers={"Authorization": f"Bearer {TOKEN}", "Accept": "application/vnd.github+json"},
     timeout=60,
 )
+
+
+def _post(path: str, body: dict, retries: int = 3) -> httpx.Response:
+    last = None
+    for attempt in range(retries):
+        r = api.post(path, json=body)
+        if r.status_code < 500 and r.status_code != 404:
+            return r
+        last = r
+        print(f"  {path} {r.status_code} 重試 {attempt + 1}/{retries}: {r.text[:150]}")
+        time.sleep(3 * (attempt + 1))
+    return last
+
+
+def _patch(path: str, body: dict, retries: int = 3) -> httpx.Response:
+    last = None
+    for attempt in range(retries):
+        r = api.patch(path, json=body)
+        if r.status_code < 500:
+            return r
+        last = r
+        print(f"  {path} {r.status_code} 重試 {attempt + 1}/{retries}: {r.text[:150]}")
+        time.sleep(3 * (attempt + 1))
+    return last
 
 # 1) 初始化空倉庫：README 首次提交（自動建 main 分支）
 r = api.get(f"/repos/{OWNER}/{REPO}/git/ref/heads/main")
@@ -37,8 +62,11 @@ base_commit = api.get(f"/repos/{OWNER}/{REPO}/git/commits/{base_commit_sha}").js
 base_tree_sha = base_commit["tree"]["sha"]
 
 # 2) 全部文件 → blobs → tree
+# GitHub 策略：git trees API 拒絕 .github/workflows/ 路徑（404），該類文件走 contents API
 files = [f for f in subprocess.check_output(["git", "ls-files", "-z"]).decode().split("\x00") if f]
-print(f"共 {len(files)} 個文件")
+workflow_files = [f for f in files if f.startswith(".github/workflows/")]
+files = [f for f in files if not f.startswith(".github/workflows/")]
+print(f"共 {len(files)} 個文件（workflows {len(workflow_files)} 個走 contents API）")
 tree_items = []
 for i, f in enumerate(files, 1):
     content = base64.b64encode(open(f, "rb").read()).decode()
@@ -48,15 +76,15 @@ for i, f in enumerate(files, 1):
     if i % 20 == 0:
         print(f"  blobs {i}/{len(files)}")
 
-r = api.post(f"/repos/{OWNER}/{REPO}/git/trees", json={"base_tree": base_tree_sha, "tree": tree_items})
+r = _post(f"/repos/{OWNER}/{REPO}/git/trees", {"base_tree": base_tree_sha, "tree": tree_items})
 r.raise_for_status()
 tree_sha = r.json()["sha"]
 print("tree:", tree_sha[:12])
 
 # 3) 提交並推進 main
-r = api.post(
+r = _post(
     f"/repos/{OWNER}/{REPO}/git/commits",
-    json={
+    {
         "message": "JobFly 求職簡歷自動投遞系統：P0-P5 全模塊 + 認證代理",
         "tree": tree_sha,
         "parents": [base_commit_sha],
@@ -64,6 +92,19 @@ r = api.post(
 )
 r.raise_for_status()
 commit_sha = r.json()["sha"]
-r = api.patch(f"/repos/{OWNER}/{REPO}/git/refs/heads/main", json={"sha": commit_sha})
+r = _patch(f"/repos/{OWNER}/{REPO}/git/refs/heads/main", {"sha": commit_sha})
 r.raise_for_status()
+
+# 4) workflow 文件走 contents API
+for f in workflow_files:
+    content = base64.b64encode(open(f, "rb").read()).decode()
+    r = api.put(
+        f"/repos/{OWNER}/{REPO}/contents/{f}",
+        json={"message": f"add {f}", "content": content},
+    )
+    if r.status_code >= 400:
+        print(f"⚠️ workflow 上傳被拒({r.status_code})，已跳過: {f}（新帳號 Actions 受限）")
+    else:
+        print("workflow uploaded:", f)
+
 print("✅ 完成:", f"https://github.com/{OWNER}/{REPO}", "| commit", commit_sha[:12])
