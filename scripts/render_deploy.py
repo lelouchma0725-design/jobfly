@@ -62,7 +62,11 @@ def main() -> None:
         {"key": "PLAYWRIGHT_BROWSERS_PATH", "value": "/ms-playwright"},
     ]
 
-    # 後端
+    # 後端（先刪除同名舊服務，確保服務配置以本次為準）
+    existing = [s.get("service", s) for s in api.get("/services").json()
+                if s.get("service", s).get("name") == "jobfly-backend"]
+    for svc in existing:
+        print("刪除舊後端服務:", svc["id"], api.delete(f"/services/{svc['id']}").status_code)
     r = api.post(
         "/services",
         json={
@@ -75,8 +79,9 @@ def main() -> None:
             "plan": "free",
             "serviceDetails": {
                 "env": "docker",
-                "dockerfilePath": "./backend/Dockerfile",
-                "dockerContext": "./backend",
+                # 注意：dockerfilePath 相對 dockerContext 解析（實測）
+                "dockerContext": ".",
+                "dockerfilePath": "backend/Dockerfile",
             },
             "envVars": backend_envs,
         },
@@ -87,7 +92,11 @@ def main() -> None:
     backend_svc = r.json()
     backend_id = backend_svc["service"]["id"] if "service" in backend_svc else backend_svc["id"]
 
-    # 前端
+    # 前端（同樣先刪舊）
+    existing_f = [s.get("service", s) for s in api.get("/services").json()
+                  if s.get("service", s).get("name") == "jobfly-frontend"]
+    for svc in existing_f:
+        print("刪除舊前端服務:", svc["id"], api.delete(f"/services/{svc['id']}").status_code)
     r = api.post(
         "/services",
         json={
