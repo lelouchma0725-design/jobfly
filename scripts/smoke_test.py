@@ -139,13 +139,19 @@ def main() -> None:
             break
     check("採集完成(Greenhouse 實網)", collected)
 
-    # 9. 崗位庫 + 匹配
+    # 9. 崗位庫 + 匹配（匹配評分在後台採集末尾觸發，輪詢等待）
     r = c.get("/api/jobs?limit=5")
     check("崗位庫有數據", r.status_code == 200 and len(r.json().get("items", [])) > 0)
-    r = c.get("/api/matches")
-    scored = [m for m in r.json() if m.get("match_score") is not None]
-    check("匹配評分(LLM)", r.status_code == 200 and len(scored) > 0,
-          f"已評分 {len(scored)}/{len(r.json())}")
+    scored = 0
+    for _ in range(12):
+        r = c.get("/api/matches")
+        if r.status_code == 200:
+            scored = len([m for m in r.json() if m.get("match_score") is not None])
+            if scored > 0:
+                break
+        time.sleep(15)
+    check("匹配評分(LLM)", r.status_code == 200 and scored > 0,
+          f"已評分 {scored}/{len(r.json()) if r.status_code == 200 else '?'}")
 
     # 10. 投遞隊列（off 模式：驗證不投遞）
     r = c.post("/api/applications/run")
