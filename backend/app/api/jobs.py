@@ -34,8 +34,8 @@ def list_jobs(
             FROM job_postings p
             LEFT JOIN job_matches m ON m.posting_id = p.id AND m.user_id = :uid
             WHERE p.is_active = true
-              AND (:q IS NULL OR p.title ILIKE '%'||:q||'%' OR p.description_text ILIKE '%'||:q||'%')
-              AND (:co IS NULL OR p.company_name ILIKE '%'||:co||'%')
+              AND (CAST(:q AS text) IS NULL OR p.title ILIKE '%'||:q||'%' OR p.description_text ILIKE '%'||:q||'%')
+              AND (CAST(:co AS text) IS NULL OR p.company_name ILIKE '%'||:co||'%')
             ORDER BY p.first_seen_at DESC
             LIMIT :lim OFFSET :off
             """
