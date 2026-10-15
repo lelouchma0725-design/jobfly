@@ -40,10 +40,13 @@ class RefreshRequest(BaseModel):
 
 @router.post("/signup")
 def signup(payload: Credentials) -> dict:
-    resp = httpx.post(
-        f"{_SB}/auth/v1/signup", headers=_anon_headers(),
-        json={"email": payload.email, "password": payload.password}, timeout=20,
-    )
+    try:
+        resp = httpx.post(
+            f"{_SB}/auth/v1/signup", headers=_anon_headers(),
+            json={"email": payload.email, "password": payload.password}, timeout=20,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"無法連接 Supabase Auth（服務端網絡問題）: {exc}") from exc
     if resp.status_code >= 400:
         raise HTTPException(resp.status_code, _err(resp))
     data = resp.json()
@@ -54,10 +57,13 @@ def signup(payload: Credentials) -> dict:
 
 @router.post("/signin")
 def signin(payload: Credentials) -> dict:
-    resp = httpx.post(
-        f"{_SB}/auth/v1/token?grant_type=password", headers=_anon_headers(),
-        json={"email": payload.email, "password": payload.password}, timeout=20,
-    )
+    try:
+        resp = httpx.post(
+            f"{_SB}/auth/v1/token?grant_type=password", headers=_anon_headers(),
+            json={"email": payload.email, "password": payload.password}, timeout=20,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"無法連接 Supabase Auth（服務端網絡問題）: {exc}") from exc
     if resp.status_code >= 400:
         raise HTTPException(resp.status_code, _err(resp))
     return resp.json()
@@ -65,10 +71,13 @@ def signin(payload: Credentials) -> dict:
 
 @router.post("/magic-link")
 def magic_link(payload: MagicLinkRequest) -> dict:
-    resp = httpx.post(
-        f"{_SB}/auth/v1/magiclink", headers=_anon_headers(),
-        json={"email": payload.email, "emailRedirectTo": settings.frontend_url}, timeout=20,
-    )
+    try:
+        resp = httpx.post(
+            f"{_SB}/auth/v1/magiclink", headers=_anon_headers(),
+            json={"email": payload.email, "emailRedirectTo": settings.frontend_url}, timeout=20,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"無法連接 Supabase Auth（服務端網絡問題）: {exc}") from exc
     if resp.status_code >= 400:
         raise HTTPException(resp.status_code, _err(resp))
     return {"status": "sent"}
@@ -76,10 +85,13 @@ def magic_link(payload: MagicLinkRequest) -> dict:
 
 @router.post("/refresh")
 def refresh(payload: RefreshRequest) -> dict:
-    resp = httpx.post(
-        f"{_SB}/auth/v1/token?grant_type=refresh_token", headers=_anon_headers(),
-        json={"refresh_token": payload.refresh_token}, timeout=20,
-    )
+    try:
+        resp = httpx.post(
+            f"{_SB}/auth/v1/token?grant_type=refresh_token", headers=_anon_headers(),
+            json={"refresh_token": payload.refresh_token}, timeout=20,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"無法連接 Supabase Auth（服務端網絡問題）: {exc}") from exc
     if resp.status_code >= 400:
         raise HTTPException(resp.status_code, _err(resp))
     return resp.json()
