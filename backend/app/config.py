@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     # 運維密鑰（/api/auth/admin-create 等維護端點）
     ops_secret: str = ""
 
+    # 調試：=1 時 500 響應返回 traceback（僅排障用，生產保持空）
+    debug_500: str = ""
+
     @property
     def admin_email_list(self) -> list[str]:
         return [e.strip().lower() for e in self.admin_emails.split(",") if e.strip()]

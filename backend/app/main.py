@@ -63,6 +63,21 @@ app.include_router(tasks.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 
 
+if settings.debug_500 == "1":
+    import traceback
+
+    from fastapi import Request
+    from fastapi.responses import JSONResponse
+
+    @app.exception_handler(Exception)
+    async def _debug_500(request: Request, exc: Exception):
+        logger.exception("未處理異常 %s %s", request.method, request.url.path)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": str(exc), "trace": traceback.format_exc()[-3000:]},
+        )
+
+
 @app.get("/healthz")
 def healthz() -> dict:
     return {"status": "ok"}
