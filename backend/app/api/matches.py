@@ -34,7 +34,7 @@ def list_matches(user: CurrentUser, db: DB, status: str | None = None) -> list[d
                    p.company_name, p.title, p.location, p.apply_url, p.first_seen_at
             FROM job_matches m
             JOIN job_postings p ON p.id = m.posting_id
-            WHERE m.user_id = :uid AND (:st IS NULL OR m.status = :st)
+            WHERE m.user_id = :uid AND (CAST(:st AS text) IS NULL OR m.status = :st)
             ORDER BY m.match_score DESC NULLS LAST, p.first_seen_at DESC
             LIMIT 200
             """

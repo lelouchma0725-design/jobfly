@@ -87,7 +87,7 @@ def list_documents(user: CurrentUser, db: DB, doc_type: str | None = None) -> li
             SELECT id, doc_type, file_name, mime, size_bytes, parse_status, created_at, is_active
             FROM user_documents
             WHERE user_id = :uid AND deleted_at IS NULL
-              AND (:t IS NULL OR doc_type = :t)
+              AND (CAST(:t AS text) IS NULL OR doc_type = :t)
             ORDER BY created_at DESC
             """
         ),
