@@ -1,0 +1,27 @@
+# ── 密鑰與本地環境：永不提交 ──
+.env
+.env.local
+.env.*.local
+
+# ── Python ──
+backend/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# ── 前端 ──
+frontend/node_modules/
+frontend/dist/
+
+# ── 本機工具與緩存 ──
+.uv-cache/
+.uv-python/
+.playwright-browsers/
+.tooling/
+.npm-cache/
+.pnpm-store/
+
+# ── 系統 ──
+.DS_Store
+*.log
