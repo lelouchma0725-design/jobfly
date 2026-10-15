@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { supabase } from "../lib/supabase";
+import { signOut } from "../lib/auth";
 import { api } from "../lib/api";
 
 export default function Header() {
@@ -9,9 +9,6 @@ export default function Header() {
     api<{ role: string }>("/api/me").then((m) => setRole(m.role)).catch(() => {});
   }, []);
 
-  async function signOut() {
-    await supabase.auth.signOut();
-  }
   return (
     <header>
       <h1>JobFly</h1>
@@ -27,7 +24,7 @@ export default function Header() {
         <Link to="/companies">關注公司</Link>
         <Link to="/settings">投遞設置</Link>
         {role === "admin" && <Link to="/admin">管理後台</Link>}
-        <button className="ghost" onClick={signOut}>
+        <button className="ghost" onClick={() => void signOut()}>
           退出
         </button>
       </nav>

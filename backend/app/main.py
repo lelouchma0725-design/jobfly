@@ -8,7 +8,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
-    accounts, admin, applications, companies, documents, jobs, matches, me, profile, tasks,
+    accounts, admin, applications, auth, companies, documents, jobs, matches, me,
+    profile, tasks,
 )
 from app.config import settings
 
@@ -49,6 +50,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router, prefix="/api")
 app.include_router(me.router, prefix="/api")
 app.include_router(accounts.router, prefix="/api")
 app.include_router(documents.router, prefix="/api")

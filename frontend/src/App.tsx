@@ -1,7 +1,7 @@
-import { Session } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
-import { supabase } from "./lib/supabase";
+import { getSession, signOut } from "./lib/auth";
+import type { AuthSession } from "./lib/auth";
 import Login from "./pages/Login";
 import Settings from "./pages/Settings";
 import Dashboard from "./pages/Dashboard";
@@ -16,20 +16,14 @@ import Tasks from "./pages/Tasks";
 import Admin from "./pages/Admin";
 
 export default function App() {
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [session, setSession] = useState<AuthSession | null>(() => getSession());
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setLoading(false);
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
-    return () => sub.subscription.unsubscribe();
+    // 頁面刷新時若有會話則維持；失效由 api() 的 401 刷新機制處理
+    setSession(getSession());
   }, []);
 
-  if (loading) return <div className="center">載入中…</div>;
-  if (!session) return <Login />;
+  if (!session) return <Login onLogin={setSession} />;
 
   return (
     <Routes>
@@ -48,3 +42,5 @@ export default function App() {
     </Routes>
   );
 }
+
+export { signOut };

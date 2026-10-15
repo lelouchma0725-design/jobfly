@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     # Supabase
     supabase_url: str = ""
     supabase_service_role_key: str = ""
+    supabase_anon_key: str = ""
     database_url: str = ""
 
     # 信封加密 KEK

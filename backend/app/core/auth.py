@@ -1,12 +1,14 @@
-"""Supabase Auth 集成：驗證前端傳來的 JWT 並注入當前用戶。
+"""用戶認證：驗證前端傳來的 Supabase JWT 並注入當前用戶。
 
-- 用戶登錄/註冊走 Supabase Auth（前端 supabase-js）
-- 後端驗證 Bearer token 簽名（JWKS），確認對應 auth.users 存在
-- 所有需要用戶身份的端點依賴 get_current_user
+- 前端登錄/註冊走後端認證代理（app/api/auth.py），瀏覽器不直連 supabase.co
+- 後端驗證 token：優先調 Supabase /auth/v1/user（權威），失敗退 JWKS 本地驗簽
+- 進程內緩存驗證結果（5 分鐘），降低每個請求的網絡往返
+- 首次訪問自動補建 profiles 行；ADMIN_EMAILS 中的郵箱自動提升 admin
 """
 from __future__ import annotations
 
 import logging
+import time
 from functools import lru_cache
 from typing import Annotated
 
@@ -24,6 +26,10 @@ logger = logging.getLogger(__name__)
 
 _bearer = HTTPBearer(auto_error=False)
 
+# token -> (expire_ts, user_id, email)
+_verify_cache: dict[str, tuple[float, str, str | None]] = {}
+_CACHE_TTL = 300
+
 
 @lru_cache(maxsize=1)
 def _jwks() -> dict:
@@ -37,36 +43,68 @@ def _jwks() -> dict:
         raise RuntimeError("Supabase JWKS 不可用") from exc
 
 
-def _decode_token(token: str) -> dict:
+def _verify_via_api(token: str) -> tuple[str, str | None] | None:
+    """調 Supabase /auth/v1/user 驗證，返回 (user_id, email) 或 None。"""
+    try:
+        resp = httpx.get(
+            f"{settings.supabase_url}/auth/v1/user",
+            headers={
+                "apikey": settings.supabase_anon_key,
+                "Authorization": f"Bearer {token}",
+            },
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return data["id"], data.get("email")
+    except httpx.HTTPError:
+        pass
+    return None
+
+
+def _verify_local(token: str) -> tuple[str, str | None] | None:
     try:
         unverified = jwt.get_unverified_header(token)
         kid = unverified["kid"]
         key = next(k for k in _jwks()["keys"] if k["kid"] == kid)
-        return jwt.decode(
+        payload = jwt.decode(
             token,
             key=jwt.algorithms.RSAAlgorithm.from_jwk(key),
             algorithms=["RS256"],
             audience="authenticated",
             options={"verify_aud": True},
         )
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "登錄已失效，請重新登錄") from exc
+        return payload.get("sub"), payload.get("email")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def verify_token(token: str) -> tuple[str, str | None]:
+    """驗證 token，返回 (user_id, email)。兩種方式都失敗 → 401。"""
+    now = time.time()
+    hit = _verify_cache.get(token)
+    if hit and hit[0] > now:
+        return hit[1], hit[2]
+    result = _verify_via_api(token) or _verify_local(token)
+    if not result:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "登錄已失效，請重新登錄")
+    try:
+        exp = jwt.decode(token, options={"verify_signature": False}).get("exp")
+        ttl = min(_CACHE_TTL, max(0, int(exp) - int(now))) if exp else _CACHE_TTL
+    except Exception:  # noqa: BLE001
+        ttl = _CACHE_TTL
+    _verify_cache[token] = (now + ttl, result[0], result[1])
+    return result
 
 
 def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """返回 {'id': uuid, 'email': str|None, 'phone': str|None, 'role': str}。
-
-    同時保證 profiles 行存在（首次登錄自動補建）。
-    """
+    """返回 {'id': uuid, 'email': str|None, 'phone': str|None, 'role': str}。"""
     if credentials is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "缺少登錄憑證")
-    payload = _decode_token(credentials.credentials)
-    user_id = payload.get("sub")
-    if not user_id:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token 無效")
+    user_id, email = verify_token(credentials.credentials)
 
     row = db.execute(
         text(
@@ -79,17 +117,13 @@ def get_current_user(
             RETURNING id::text, email, phone, role
             """
         ),
-        {
-            "id": user_id,
-            "email": payload.get("email"),
-            "phone": payload.get("phone"),
-        },
+        {"id": user_id, "email": email, "phone": None},
     ).mappings().one()
     db.commit()
     result = dict(row)
     # 管理員自動提升：ADMIN_EMAILS 中的郵箱登錄即成為 admin
-    email = (result.get("email") or "").lower()
-    if email and email in settings.admin_email_list and result.get("role") != "admin":
+    email_lower = (result.get("email") or "").lower()
+    if email_lower and email_lower in settings.admin_email_list and result.get("role") != "admin":
         db.execute(text("UPDATE profiles SET role='admin' WHERE id=:id"), {"id": user_id})
         db.commit()
         result["role"] = "admin"
