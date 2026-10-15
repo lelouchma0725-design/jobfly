@@ -18,6 +18,7 @@ _ATS_HINTS = (
     ("greenhouse", ("greenhouse.io",)),
     ("lever", ("lever.co",)),
     ("workday", ("myworkdayjobs.com",)),
+    ("gtht", ("hr.gtht.com",)),
 )
 
 GENERIC_LINK_LIMIT = 10  # 通用採集每站最多抓取詳情數

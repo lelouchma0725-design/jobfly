@@ -17,6 +17,7 @@ class ApplyContext:
     resume_local_path: str | None  # 已下載到本地的簡歷文件路徑
     settings: dict               # user_settings 行
     dry_run: bool = False
+    account: dict | None = None  # 平台帳號明文 {'login':…, 'password':…}（已解密的登錄憑據）
 
 
 @dataclass

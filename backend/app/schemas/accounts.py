@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 PLATFORMS = (
     "workday", "greenhouse", "lever", "successfactors", "icims", "official",
-    "liepin", "boss", "lagou", "zhilian", "job51", "linkedin", "indeed", "other",
+    "liepin", "boss", "lagou", "zhilian", "job51", "linkedin", "indeed", "gtht", "other",
 )
 
 
