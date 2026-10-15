@@ -54,4 +54,11 @@ def register_adapter(adapter: BaseApplyAdapter) -> BaseApplyAdapter:
 
 def get_apply_adapter(source: str) -> BaseApplyAdapter:
     """投遞適配器註冊表；未知來源降級通用適配器。"""
-    return _APPLY_REGISTRY.get(source) or _APPLY_REGISTRY["generic"]
+    entry = _APPLY_REGISTRY.get(source)
+    if entry is None:
+        entry = _APPLY_REGISTRY["generic"]
+    if isinstance(entry, type):
+        entry = entry()
+        if source in _APPLY_REGISTRY:
+            _APPLY_REGISTRY[source] = entry
+    return entry
