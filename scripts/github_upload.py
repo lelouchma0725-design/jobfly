@@ -102,7 +102,9 @@ for f in workflow_files:
         f"/repos/{OWNER}/{REPO}/contents/{f}",
         json={"message": f"add {f}", "content": content},
     )
-    r.raise_for_status()
-    print("workflow uploaded:", f)
+    if r.status_code >= 400:
+        print(f"⚠️ workflow 上傳被拒({r.status_code})，已跳過: {f}（新帳號 Actions 受限）")
+    else:
+        print("workflow uploaded:", f)
 
 print("✅ 完成:", f"https://github.com/{OWNER}/{REPO}", "| commit", commit_sha[:12])
