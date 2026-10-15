@@ -1,0 +1,151 @@
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #f5f6f8;
+  color: #1c1e21;
+}
+.center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.column {
+  flex-direction: column;
+  gap: 12px;
+}
+.page header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 24px;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+}
+.page header nav {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+.page main {
+  padding: 24px;
+}
+.narrow {
+  max-width: 720px;
+  margin: 0 auto;
+}
+.card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 24px;
+  max-width: 420px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.card.wide {
+  max-width: 900px;
+}
+.card table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+.card table th,
+.card table td {
+  border-bottom: 1px solid #eee;
+  padding: 8px 6px;
+  text-align: left;
+}
+.row.wrap {
+  flex-wrap: wrap;
+}
+.row.wrap input,
+.row.wrap select {
+  flex: 1 1 160px;
+}
+.code {
+  background: #f8f9fb;
+  border: 1px solid #eee;
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 12px;
+  overflow: auto;
+}
+.task {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 16px;
+  background: #fafbfc;
+}
+.stat {
+  background: #f8f9fb;
+  border: 1px solid #eee;
+  border-radius: 10px;
+  padding: 12px 16px;
+  min-width: 130px;
+  flex: 1;
+}
+.task h3 {
+  margin: 0 0 8px;
+  border: none;
+  padding: 0;
+  font-size: 15px;
+  color: #1c1e21;
+}
+textarea {
+  padding: 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 14px;
+}
+.card h1,
+.card h2 {
+  margin: 0 0 8px;
+}
+.card h3 {
+  margin: 16px 0 4px;
+  font-size: 14px;
+  color: #555;
+  border-top: 1px solid #eee;
+  padding-top: 12px;
+}
+input,
+select,
+button {
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+}
+button {
+  background: #1d4ed8;
+  color: #fff;
+  cursor: pointer;
+  border: none;
+}
+button.ghost {
+  background: #fff;
+  color: #1d4ed8;
+  border: 1px solid #1d4ed8;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+.muted {
+  color: #6b7280;
+  font-size: 13px;
+}
+.notice {
+  color: #b45309;
+  font-size: 13px;
+  min-height: 18px;
+}
