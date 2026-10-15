@@ -1,5 +1,5 @@
 # JobFly 後端 Dockerfile（基於 Playwright 官方 Python 鏡像，瀏覽器已預裝）
-FROM mcr.microsoft.com/playwright/python:v1.64.0-noble
+FROM mcr.microsoft.com/playwright/python:v1.63.0-noble
 
 WORKDIR /app
 
