@@ -26,6 +26,7 @@ const PLATFORMS: Record<string, string> = {
   job51: "前程無憂",
   linkedin: "LinkedIn",
   indeed: "Indeed",
+  gtht: "國泰海通證券",
   other: "其他",
 };
 

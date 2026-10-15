@@ -139,6 +139,8 @@ def _prepare_context(db: Session, app: dict, payload: dict, settings_row: dict) 
 
     local_path = _download_resume(payload)
 
+    account = _load_account(db, app)
+
     return apply_base.ApplyContext(
         user_id=app["user_id"],
         application_id=app["id"],
@@ -148,7 +150,34 @@ def _prepare_context(db: Session, app: dict, payload: dict, settings_row: dict) 
         cover_letter=cover_letter,
         resume_local_path=local_path,
         settings=settings_row,
+        account=account,
     )
+
+
+def _load_account(db: Session, app: dict) -> dict | None:
+    """解密平台帳號（按投遞來源匹配，gtht 等登錄型投遞使用）。"""
+    from app.core.security import decrypt_field, get_dek_for_user
+
+    for platform in (app["source"], "official"):
+        row = db.execute(
+            text(
+                "SELECT login_identifier_enc, password_enc FROM platform_accounts "
+                "WHERE user_id=:uid AND platform=:p AND status != 'locked' "
+                "ORDER BY created_at LIMIT 1"
+            ),
+            {"uid": app["user_id"], "p": platform},
+        ).mappings().first()
+        if row:
+            try:
+                dek = get_dek_for_user(db, app["user_id"])
+                return {
+                    "login": decrypt_field(dek, row["login_identifier_enc"]),
+                    "password": decrypt_field(dek, row["password_enc"]),
+                }
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("平台帳號解密失敗 user=%s: %s", app["user_id"], exc)
+                return None
+    return None
 
 
 def _download_resume(payload: dict) -> str | None:

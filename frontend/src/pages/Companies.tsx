@@ -107,6 +107,7 @@ export default function Companies() {
               <option value="workday">Workday</option>
               <option value="greenhouse">Greenhouse</option>
               <option value="lever">Lever</option>
+              <option value="gtht">國泰海通證券</option>
               <option value="linkedin">LinkedIn</option>
             </select>
             <input
