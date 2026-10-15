@@ -1,15 +1,17 @@
 """崗位瀏覽與手動採集端點（FR-3a）。"""
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.collectors.pipeline import collect_for_user
 from app.core.auth import get_current_user
 from app.db import get_db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -96,10 +98,26 @@ def get_job(user: CurrentUser, db: DB, posting_id: str) -> dict:
 
 
 @router.post("/collect/run", status_code=202)
-def run_collect(user: CurrentUser, db: DB) -> dict:
-    """手動觸發：對當前用戶的關注公司立即採集 + 匹配。"""
-    try:
-        report = collect_for_user(db, user["id"])
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(500, f"採集失敗: {exc}") from exc
-    return report
+def run_collect(user: CurrentUser, db: DB, background_tasks: BackgroundTasks) -> dict:
+    """異步觸發：對當前用戶的關注公司立即採集 + 匹配（後台執行）。
+
+    同步執行會超過 Render 免費層 100s 請求限制，故改後台任務；
+    前端/腳本通過輪詢 /api/jobs 與 /api/matches 獲取結果。
+    """
+    from app.collectors.pipeline import collect_for_user
+
+    uid = user["id"]
+
+    def _run() -> None:
+        from app.db import SessionLocal
+
+        s = SessionLocal()
+        try:
+            collect_for_user(s, uid)
+        except Exception:  # noqa: BLE001
+            logger.exception("後台採集失敗 user=%s", uid)
+        finally:
+            s.close()
+
+    background_tasks.add_task(_run)
+    return {"started": True, "note": "採集在後台執行，稍後刷新崗位庫查看結果"}

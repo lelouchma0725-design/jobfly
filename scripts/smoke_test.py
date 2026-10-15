@@ -58,7 +58,7 @@ def resume_text() -> str:
 
 
 def main() -> None:
-    c = httpx.Client(base_url=BASE, timeout=60)
+    c = httpx.Client(base_url=BASE, timeout=180)
 
     # 1. healthz
     r = c.get("/healthz")
@@ -121,7 +121,7 @@ def main() -> None:
     r = c.get("/api/profile")
     check("畫像報表", r.status_code == 200 and bool(r.json().get("summary")), r.text[:120])
 
-    # 8. 關注公司 + 採集（Greenhouse 實網）
+    # 8. 關注公司 + 採集（後台異步，輪詢等待結果）
     r = c.post("/api/companies", json={
         "company_name": "Cloudflare",
         "careers_url": "https://boards.greenhouse.io/cloudflare",
@@ -129,8 +129,15 @@ def main() -> None:
     })
     check("添加關注公司", r.status_code == 201, r.text[:150])
     r = c.post("/api/jobs/collect/run")
-    ok = r.status_code == 202 and r.json().get("collected", 0) > 0
-    check("採集(Greenhouse 實網)", ok, r.text[:200])
+    check("觸發採集(後台)", r.status_code == 202 and r.json().get("started") is True, r.text[:150])
+    collected = False
+    for _ in range(30):
+        time.sleep(15)
+        r = c.get("/api/jobs?limit=1")
+        if r.status_code == 200 and len(r.json().get("items", [])) > 0:
+            collected = True
+            break
+    check("採集完成(Greenhouse 實網)", collected)
 
     # 9. 崗位庫 + 匹配
     r = c.get("/api/jobs?limit=5")
