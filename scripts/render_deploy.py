@@ -79,9 +79,12 @@ def main() -> None:
             "plan": "free",
             "serviceDetails": {
                 "env": "docker",
-                # 注意：dockerfilePath 相對 dockerContext 解析（實測）
-                "dockerContext": ".",
-                "dockerfilePath": "backend/Dockerfile",
+                # Dockerfile 在倉庫根目錄（context 與路徑無歧義）
+                "envSpecificDetails": {
+                    "dockerContext": ".",
+                    "dockerfilePath": "Dockerfile",
+                    "dockerCommand": "",
+                },
             },
             "envVars": backend_envs,
         },
