@@ -44,6 +44,19 @@ trailer<</Size 4/Root 1 0 R>>
 %%EOF"""
 
 
+def resume_text() -> str:
+    return """張三 | zhangsan@example.com | 13800138000 | 深圳
+教育：華中科技大學 本科 計算機科學 (2014 - 2018)
+後端工程師 @ 騰訊 (2018 - 2021)
+- 負責微信支付核心交易系統，日均處理千萬級訂單
+- 使用 Go/Python 優化結算鏈路，延遲降低 40%
+高級後端工程師 @ 字節跳動 (2021 - 至今)
+- 主導推薦系統服務化改造，支撐 2 億 DAU
+- Kubernetes/Docker 容器化落地，成本下降 30%
+技能：Go, Python, Kubernetes, Redis, MySQL, gRPC, 微服務
+"""
+
+
 def main() -> None:
     c = httpx.Client(base_url=BASE, timeout=60)
 
@@ -51,8 +64,8 @@ def main() -> None:
     r = c.get("/healthz")
     check("healthz", r.status_code == 200 and r.json().get("status") == "ok", r.text[:100])
 
-    # 2. 註冊隨機用戶（若項目要求郵箱確認，降級用管理員帳號繼續）
-    email = f"smoke-{uuid.uuid4().hex[:10]}@jobflysmoke.com"
+    # 2. 註冊隨機用戶（gmail 域名通過 GoTrue 校驗；若需郵箱確認，降級用管理員帳號繼續）
+    email = f"jobfly.smoke.{uuid.uuid4().hex[:8]}@gmail.com"
     token = None
     r = c.post("/api/auth/signup", json={"email": email, "password": "Smoke123456!"})
     if r.status_code == 200 and r.json().get("status") == "ok":
@@ -81,10 +94,10 @@ def main() -> None:
     ok = r.status_code == 200 and r.json().get("match_threshold") == 50
     check("PATCH 設置（閾值50/off模式）", ok, r.text[:120])
 
-    # 5. 上傳簡歷
+    # 5. 上傳簡歷（TXT，繞開 PDF 解析器）
     r = c.post(
         "/api/documents?doc_type=resume",
-        files={"file": ("resume.pdf", io.BytesIO(minimal_pdf()), "application/pdf")},
+        files={"file": ("resume.txt", resume_text().encode("utf-8"), "text/plain")},
     )
     ok = r.status_code == 201
     doc_id = r.json().get("id") if ok else None

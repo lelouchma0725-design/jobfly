@@ -45,4 +45,8 @@ def register(collector: BaseCollector) -> BaseCollector:
 def get_collector(name: str) -> BaseCollector:
     if name not in _REGISTRY:
         raise KeyError(f"未註冊的採集器: {name}（可用: {sorted(_REGISTRY)}）")
-    return _REGISTRY[name]
+    entry = _REGISTRY[name]
+    # 註冊的是類時實例化（裝飾器掛在類上）
+    if isinstance(entry, type):
+        entry = _REGISTRY[name] = entry()
+    return entry

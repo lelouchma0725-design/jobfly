@@ -56,16 +56,16 @@ def parse_document(db: Session, doc_id: str, user_id: str, storage_path: str, mi
     db.commit()
 
     try:
-        text, needs_ocr = extract_text(storage_path, mime)
+        extracted_text, needs_ocr = extract_text(storage_path, mime)
         if needs_ocr:
             from app.services.parsing import download_bytes
 
-            text = ocr_image(download_bytes(storage_path))
+            extracted_text = ocr_image(download_bytes(storage_path))
             db.execute(
                 text("UPDATE user_documents SET parse_status='ocr' WHERE id=:id"),
                 {"id": doc_id},
             )
-        if not text.strip():
+        if not extracted_text.strip():
             raise RuntimeError("未能從文件中抽取到任何文本")
 
         doc_type = db.execute(
@@ -73,7 +73,7 @@ def parse_document(db: Session, doc_id: str, user_id: str, storage_path: str, mi
         ).mappings().one()["doc_type"]
 
         if doc_type in ("resume", "cover_letter"):
-            structured = chat_json(_RESUME_SYSTEM, f"簡歷原文：\n{text[:12000]}")
+            structured = chat_json(_RESUME_SYSTEM, f"簡歷原文：\n{extracted_text[:12000]}")
             db.execute(
                 text(
                     """
@@ -83,10 +83,10 @@ def parse_document(db: Session, doc_id: str, user_id: str, storage_path: str, mi
                     WHERE id=:id
                     """
                 ),
-                {"id": doc_id, "txt": text, "sj": j(structured)},
+                {"id": doc_id, "txt": extracted_text, "sj": j(structured)},
             )
             if doc_type == "resume":
-                _create_resume_version(db, doc_id, user_id, text, structured)
+                _create_resume_version(db, doc_id, user_id, extracted_text, structured)
         else:
             db.execute(
                 text(
@@ -96,7 +96,7 @@ def parse_document(db: Session, doc_id: str, user_id: str, storage_path: str, mi
                     WHERE id=:id
                     """
                 ),
-                {"id": doc_id, "txt": text},
+                {"id": doc_id, "txt": extracted_text},
             )
         db.commit()
     except Exception as exc:  # noqa: BLE001
