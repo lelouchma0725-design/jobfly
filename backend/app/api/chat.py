@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.collectors.pipeline import collect_for_user
 from app.core.auth import get_current_user
+from app.core.jsonutil import j
 from app.core.llm import chat_with_tools
 from app.db import get_db
 
