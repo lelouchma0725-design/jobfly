@@ -186,24 +186,33 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
         return {"完成": True, "已更新": fields}
 
     def find_job(args: dict) -> dict:
-        """精確搜索崗位庫（公司/標題關鍵詞），含最新評分。"""
+        """精確搜索崗位庫（公司/標題關鍵詞），含最新評分。分詞匹配 + 繁簡轉換。"""
         q = str(args.get("keyword") or "").strip()
         company = str(args.get("company") or "").strip()
         if not q and not company:
             return {"error": "請提供 keyword 或 company"}
+        # 繁→簡 + 分詞（按空白/特殊符號切）
+        t2s = str.maketrans("產品經理開發經驗數據應屆", "产品经理开发经验数据应届")
+        q = q.translate(t2s)
+        tokens = [t for t in q.replace("，", " ").replace("/", " ").split() if t]
+        conds, params = [], {"u": user_id, "co": company}
+        for i, tok in enumerate(tokens[:6]):
+            conds.append("p.title ILIKE '%'||:t" + str(i) + "||'%' "
+                         "OR p.description_text ILIKE '%'||:t" + str(i) + "||'%'")
+            params["t" + str(i)] = tok
+        token_where = ("(" + " AND ".join(f"({c})" for c in conds) + ")") if conds else "true"
         rows = db.execute(text(
-            """
+            f"""
             SELECT p.company_name, p.title, p.location, p.is_campus,
                    m.match_score, m.status
             FROM job_postings p
             LEFT JOIN job_matches m ON m.posting_id = p.id AND m.user_id = :u
-            WHERE p.is_active = true
-              AND (CAST(:q AS text) = '' OR p.title ILIKE '%'||:q||'%' OR p.description_text ILIKE '%'||:q||'%')
+            WHERE p.is_active = true AND {token_where}
               AND (CAST(:co AS text) = '' OR p.company_name ILIKE '%'||:co||'%')
             ORDER BY m.match_score DESC NULLS LAST, p.first_seen_at DESC
             LIMIT 10
             """
-        ), {"u": user_id, "q": q, "co": company}).mappings().all()
+        ), params).mappings().all()
         if not rows:
             return {"找到": 0, "提示": "崗位庫中沒有匹配的崗位；可先調用 run_collect 採集最新崗位後再查"}
         return {"找到": len(rows), "崗位": [
@@ -216,15 +225,22 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
         """對指定崗位即時評分（忽略緩存，用當前畫像現場重算）。"""
         q = str(args.get("keyword") or "").strip()
         company = str(args.get("company") or "").strip()
+        t2s = str.maketrans("產品經理開發經驗數據應屆", "产品经理开发经验数据应届")
+        q = q.translate(t2s)
+        tokens = [t for t in q.replace("，", " ").replace("/", " ").split() if t]
+        conds, params = [], {"co": company}
+        for i, tok in enumerate(tokens[:6]):
+            conds.append("p.title ILIKE '%'||:t" + str(i) + "||'%'")
+            params["t" + str(i)] = tok
+        token_where = ("(" + " AND ".join(f"({c})" for c in conds) + ")") if conds else "true"
         row = db.execute(text(
-            """
+            f"""
             SELECT p.id, p.company_name, p.title FROM job_postings p
-            WHERE p.is_active = true
-              AND (CAST(:q AS text) = '' OR p.title ILIKE '%'||:q||'%')
+            WHERE p.is_active = true AND {token_where}
               AND (CAST(:co AS text) = '' OR p.company_name ILIKE '%'||:co||'%')
             ORDER BY p.first_seen_at DESC LIMIT 1
             """
-        ), {"q": q, "co": company}).mappings().first()
+        ), params).mappings().first()
         if not row:
             return {"error": "未找到該崗位，可先 run_collect 採集"}
         from app.services.matching import score_posting
