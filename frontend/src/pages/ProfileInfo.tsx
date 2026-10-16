@@ -16,7 +16,11 @@ type Full = {
   info_fields: InfoField[];
 };
 
-const FACT_KEYS: Record<string, string> = {
+const KEY_LABELS: Record<string, string> = {
+  candidate_name: "姓名（簡歷提取）",
+  full_name: "姓名/暱稱",
+  email: "郵箱",
+  phone: "手機號",
   visa_status: "簽證狀態",
   preferred_locations: "期望城市",
   salary_expectation: "期望薪資",
@@ -28,9 +32,13 @@ const SOURCE_TEXT: Record<string, string> = {
   user: "手動填寫",
   resume: "簡歷解析",
   manual_answer: "投遞回填",
+  chat: "AI 助手填寫",
 };
 
-/** 個人信息總覽：基本信息 + 畫像提取 + 元信息表，一站式檢查/編輯 */
+const CORE_KEYS = ["candidate_name", "full_name", "phone", "visa_status", "preferred_locations",
+  "salary_expectation", "availability", "total_years"];
+
+/** 個人信息總覽：基本信息 + 元信息庫（含畫像提取，統一存儲），一站式檢查/編輯 */
 export default function ProfileInfo() {
   const { t } = useT();
   const [data, setData] = useState<Full | null>(null);
@@ -83,16 +91,6 @@ export default function ProfileInfo() {
     }
   }
 
-  async function saveHardFact(key: string, value: string) {
-    try {
-      await api("/api/me/hard-facts", { method: "PUT", body: JSON.stringify({ key, value }) });
-      setMsg("已保存（畫像與元信息已同步）");
-      await load();
-    } catch (e) {
-      setMsg(`保存失敗: ${(e as Error).message}`);
-    }
-  }
-
   async function delField(key: string) {
     await api(`/api/me/info-fields/${encodeURIComponent(key)}`, { method: "DELETE" });
     await load();
@@ -104,8 +102,8 @@ export default function ProfileInfo() {
         <div className="card wide">
           <h2>個人信息總覽</h2>
           <p className="muted">
-            這裡匯總你投遞簡歷所需的全部信息：基本信息 + AI 畫像從簡歷提取的內容 + 表單問答庫（元信息）。
-            投遞時表單缺項會從這裡自動互補，建議定期檢查修正。
+            這裡是你投遞簡歷所需的全部信息（統一存儲）：AI 從簡歷提取的內容、你手動維護的內容、
+            投遞回填的答案都匯總在下方信息庫，投遞時表單缺項自動從這裡互補，請定期檢查。
           </p>
 
           <h3>基本信息</h3>
@@ -118,68 +116,7 @@ export default function ProfileInfo() {
             <button onClick={() => void saveBasic()}>{t("save")}</button>
           </div>
 
-          <h3>畫像提取（來自簡歷解析）</h3>
-          {data?.profile.summary && <p>{data.profile.summary}</p>}
-          <table>
-            <tbody>
-              {Object.entries(data?.profile.hard_facts ?? {}).map(([k, v]) => (
-                <tr key={k}>
-                  <td className="muted">{FACT_KEYS[k] ?? k}</td>
-                  <td>
-                    <input
-                      defaultValue={Array.isArray(v) ? (v as string[]).join("、") : String(v ?? "")}
-                      style={{ minWidth: 280 }}
-                      onBlur={(e) => void saveHardFact(k, e.target.value)}
-                    />
-                  </td>
-                </tr>
-              ))}
-              {(["visa_status", "preferred_locations", "salary_expectation", "availability", "total_years"] as const)
-                .filter((k) => !(data?.profile.hard_facts ?? {})[k])
-                .map((k) => (
-                  <tr key={k}>
-                    <td className="muted">{FACT_KEYS[k] ?? k}</td>
-                    <td>
-                      <input
-                        placeholder="未填寫，點此補充"
-                        style={{ minWidth: 280 }}
-                        onBlur={(e) => e.target.value && void saveHardFact(k, e.target.value)}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              <tr>
-                <td className="muted">教育</td>
-                <td className="cell-wrap">
-                  {(data?.profile.education ?? [])
-                    .map((e) => `${e.school ?? ""} ${e.degree ?? ""} ${e.major ?? ""}`.trim())
-                    .filter(Boolean)
-                    .join("；") || "—"}
-                </td>
-              </tr>
-              <tr>
-                <td className="muted">工作經歷</td>
-                <td className="cell-wrap">
-                  {(data?.profile.experiences ?? [])
-                    .map((e) => `${e.title ?? ""} @ ${e.company ?? ""}`.trim())
-                    .filter(Boolean)
-                    .join("；") || "—"}
-                </td>
-              </tr>
-              <tr>
-                <td className="muted">技能</td>
-                <td className="cell-wrap">
-                  {(data?.profile.skills ?? []).map((s) => s.name).join("、") || "—"}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          <p className="muted">硬性事實可直接修改：保存後會同步到畫像與元信息表（投遞時以你手動維護的為準）。</p>
-          {data?.profile.generated_at && (
-            <p className="muted">畫像生成於：{data.profile.generated_at.slice(0, 10)}（如需更新請到「AI 畫像」重新生成）</p>
-          )}
-
-          <h3>表單問答庫（元信息，投遞時自動互補）</h3>
+          <h3>個人信息庫（投遞時自動互補，無重複單一來源）</h3>
           <table>
             <thead>
               <tr>
@@ -192,7 +129,7 @@ export default function ProfileInfo() {
             <tbody>
               {(data?.info_fields ?? []).map((f) => (
                 <tr key={f.key}>
-                  <td>{f.key}</td>
+                  <td>{KEY_LABELS[f.key] ?? f.key}</td>
                   <td className="cell-wrap">{f.value}</td>
                   <td className="muted">{SOURCE_TEXT[f.source] ?? f.source}</td>
                   <td>
@@ -211,6 +148,24 @@ export default function ProfileInfo() {
                    onChange={(e) => setNewVal(e.target.value)} />
             <button onClick={() => void addField()}>添加</button>
           </div>
+
+          {data?.profile.summary && (
+            <>
+              <h3>簡歷摘要（只讀，改簡歷後到「AI 畫像」重新生成）</h3>
+              <p>{data.profile.summary}</p>
+              <p className="muted cell-wrap">
+                教育：{(data.profile.education ?? [])
+                  .map((e) => `${e.school ?? ""} ${e.degree ?? ""} ${e.major ?? ""}`.trim())
+                  .filter(Boolean).join("；") || "—"}
+                <br />
+                經歷：{(data.profile.experiences ?? [])
+                  .map((e) => `${e.title ?? ""} @ ${e.company ?? ""}`.trim())
+                  .filter(Boolean).join("；") || "—"}
+                <br />
+                技能：{(data.profile.skills ?? []).map((s) => s.name).join("、") || "—"}
+              </p>
+            </>
+          )}
           <p className="notice">{msg}</p>
         </div>
       </main>

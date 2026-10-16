@@ -22,13 +22,13 @@ class GenerateRequest(BaseModel):
 
 
 def _rematch_bg(user_id: str) -> None:
-    """畫像更新後在後台用新畫像重新匹配歷史崗位。"""
-    from app.api.matches import rematch_all_for_user
+    """畫像更新後在後台用新畫像全量重新匹配（分批多輪）。"""
+    from app.api.matches import rematch_full
     from app.db import SessionLocal
 
     s = SessionLocal()
     try:
-        rematch_all_for_user(s, user_id)
+        rematch_full(s, user_id)
     except Exception:  # noqa: BLE001
         import logging
 

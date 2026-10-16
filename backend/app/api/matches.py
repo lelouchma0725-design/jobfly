@@ -19,26 +19,63 @@ router = APIRouter(prefix="/matches", tags=["matches"])
 CurrentUser = Annotated[dict, Depends(get_current_user)]
 DB = Annotated[Session, Depends(get_db)]
 
-REMATCH_LIMIT = 200  # 每輪重新匹配上限（控制 LLM 成本）
+REMATCH_LIMIT = 200  # 每輪評分上限（控制 LLM 成本）
 
 
-def rematch_all_for_user(db: Session, user_id: str, limit: int = REMATCH_LIMIT) -> int:
-    """用當前畫像重新評分用戶的歷史匹配（保留 applied/applying 狀態）。"""
-    rows = db.execute(
+def rematch_all_for_user(db: Session, user_id: str, limit: int = 30) -> dict:
+    """用當前畫像對用戶匹配做一輪評分（補缺失優先 + 重算最舊的），返回進度。
+
+    準確性 100% 策略：分批多輪直到 remaining=0；
+    每輪優先補評「完全沒有 match 行」的崗位，再重算最舊的已有 match。
+    """
+    total = 0
+    # 1) 補評缺失 match 的崗位（採集時漏評/新公司）
+    missing = db.execute(
         text(
-            "SELECT posting_id FROM job_matches WHERE user_id=:u "
-            "ORDER BY updated_at DESC LIMIT :n"
+            """
+            SELECT p.id FROM job_postings p
+            LEFT JOIN job_matches m ON m.posting_id = p.id AND m.user_id = :u
+            WHERE m.id IS NULL AND p.is_active = true
+            ORDER BY p.first_seen_at DESC LIMIT :n
+            """
         ),
         {"u": user_id, "n": limit},
     ).mappings().all()
-    done = 0
-    for r in rows:
+    for r in missing:
         try:
-            score_posting(db, user_id, str(r["posting_id"]))
-            done += 1
+            score_posting(db, user_id, str(r["id"]))
+            total += 1
         except Exception:  # noqa: BLE001
-            logger.exception("重新匹配失敗 user=%s posting=%s", user_id, r["posting_id"])
-    return done
+            logger.exception("補評失敗 user=%s posting=%s", user_id, r["id"])
+    # 2) 重算最舊的已有 match
+    if len(missing) < limit:
+        stale = db.execute(
+            text(
+                "SELECT posting_id FROM job_matches WHERE user_id=:u "
+                "ORDER BY updated_at ASC LIMIT :n"
+            ),
+            {"u": user_id, "n": limit - len(missing)},
+        ).mappings().all()
+        for r in stale:
+            try:
+                score_posting(db, user_id, str(r["posting_id"]))
+                total += 1
+            except Exception:  # noqa: BLE001
+                logger.exception("重新匹配失敗 user=%s posting=%s", user_id, r["posting_id"])
+    # 3) 剩餘量（供進度查詢/多輪調度）
+    remaining = db.execute(
+        text(
+            """
+            SELECT (SELECT COUNT(*) FROM job_postings p
+                    LEFT JOIN job_matches m ON m.posting_id = p.id AND m.user_id = :u
+                    WHERE m.id IS NULL AND p.is_active = true) AS miss,
+                   (SELECT COUNT(*) FROM job_matches WHERE user_id = :u) AS has
+            """
+        ),
+        {"u": user_id},
+    ).mappings().one()
+    return {"scored": total, "remaining_missing": int(remaining["miss"]),
+            "total_matches": int(remaining["has"])}
 
 
 @router.post("/{posting_id}/score", status_code=201)
@@ -51,13 +88,13 @@ def score(user: CurrentUser, db: DB, posting_id: str) -> dict:
 
 @router.get("/companies")
 def list_companies(user: CurrentUser, db: DB) -> list[dict]:
-    """匹配頁公司篩選列表（公司 + 匹配數 + 最高分）。"""
+    """匹配頁公司篩選列表（公司 + 匹配數 + 最高分；含 hard_failed 的公司）。"""
     rows = db.execute(
         text(
             """
             SELECT p.company_name, COUNT(*) AS n, MAX(m.match_score) AS top
             FROM job_matches m JOIN job_postings p ON p.id = m.posting_id
-            WHERE m.user_id = :uid AND m.match_score IS NOT NULL
+            WHERE m.user_id = :uid
             GROUP BY p.company_name ORDER BY top DESC NULLS LAST, n DESC LIMIT 100
             """
         ),
@@ -69,9 +106,19 @@ def list_companies(user: CurrentUser, db: DB) -> list[dict]:
     ]
 
 
+def rematch_full(db: Session, user_id: str, max_rounds: int = 30, batch: int = 30) -> dict:
+    """分批多輪直到全量補評完成。返回最終進度。"""
+    res = {"scored": 0, "remaining_missing": -1, "total_matches": 0}
+    for _round in range(max_rounds):
+        res = rematch_all_for_user(db, user_id, limit=batch)
+        if res["remaining_missing"] == 0:
+            break
+    return res
+
+
 @router.post("/rematch", status_code=202)
 def rematch(user: CurrentUser, db: DB, background_tasks: BackgroundTasks) -> dict:
-    """重新匹配：用當前畫像對全部歷史匹配重新評分（後台執行）。"""
+    """重新匹配：分批多輪直到全量（補評缺失 + 重算最舊），後台執行。"""
     uid = user["id"]
 
     def _run() -> None:
@@ -79,15 +126,32 @@ def rematch(user: CurrentUser, db: DB, background_tasks: BackgroundTasks) -> dic
 
         s = SessionLocal()
         try:
-            n = rematch_all_for_user(s, uid)
-            logger.info("重新匹配完成 user=%s count=%s", uid, n)
+            res = rematch_full(s, uid)
+            logger.info("重新匹配完成 user=%s %s", uid, res)
         except Exception:  # noqa: BLE001
             logger.exception("重新匹配失敗 user=%s", uid)
         finally:
             s.close()
 
     background_tasks.add_task(_run)
-    return {"started": True, "note": "重新匹配在後台執行（每輪最多 200 個），稍後刷新查看"}
+    return {"started": True, "note": "重新匹配在後台分批執行，全部完成前可反覆觸發；完成後點「刷新」查看"}
+
+
+@router.get("/rematch-status")
+def rematch_status(user: CurrentUser, db: DB) -> dict:
+    """重新匹配進度：未評分崗位數 + 已有匹配數。"""
+    row = db.execute(
+        text(
+            """
+            SELECT (SELECT COUNT(*) FROM job_postings p
+                    LEFT JOIN job_matches m ON m.posting_id = p.id AND m.user_id = :u
+                    WHERE m.id IS NULL AND p.is_active = true) AS miss,
+                   (SELECT COUNT(*) FROM job_matches WHERE user_id = :u) AS has
+            """
+        ),
+        {"u": user["id"]},
+    ).mappings().one()
+    return {"remaining_missing": int(row["miss"]), "total_matches": int(row["has"])}
 
 
 @router.get("")
