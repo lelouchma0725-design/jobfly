@@ -19,6 +19,7 @@ _ATS_HINTS = (
     ("lever", ("lever.co",)),
     ("workday", ("myworkdayjobs.com",)),
     ("gtht", ("hr.gtht.com",)),
+    ("citics", ("careers.citics.com",)),
 )
 
 GENERIC_LINK_LIMIT = 10  # 通用採集每站最多抓取詳情數

@@ -134,6 +134,36 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
         ), {"u": user_id}).mappings().all()
         return {"待處理": [dict(r) for r in rows]}
 
+    def apply_rules(_: dict) -> dict:
+        st = db.execute(text(
+            "SELECT match_threshold, auto_apply_mode, preferred_locations, location_weight, "
+            "apply_rate_limit_min FROM user_settings WHERE user_id=:u"
+        ), {"u": user_id}).mappings().first()
+        return {
+            "投遞規則": [
+                "① 公司級一崗一投：同一公司已有進行中/成功的投遞時，自動跳過該公司其餘崗位",
+                "② 校招/應屆崗位：工作年限 ≥3 年會被硬性過濾（校招僅限應屆生）",
+                f"③ 貼合度閾值：{st['match_threshold'] if st else 70}%",
+                f"④ 投遞模式：{st['auto_apply_mode'] if st else 'threshold'}",
+                f"⑤ 期望地區加權：{st['preferred_locations'] or '未設置'}，命中 +{st['location_weight'] if st else 10} 分",
+                f"⑥ 速率限制：{st['apply_rate_limit_min'] if st else 5} 分鐘/次",
+            ],
+        }
+
+    def list_info_fields(_: dict) -> dict:
+        rows = db.execute(text(
+            "SELECT key, value, source, updated_at FROM user_info_fields "
+            "WHERE user_id=:u ORDER BY updated_at DESC LIMIT 50"
+        ), {"u": user_id}).mappings().all()
+        return {
+            "個人信息庫": [
+                {"字段": r["key"], "值": r["value"][:60], "來源": r["source"]}
+                for r in rows
+            ],
+            "填寫規則": "表單必填項：精確匹配直接填；與已有信息相似度 ≥50% 自動填（記錄決策）；"
+                        "全新問題才問用戶，回答自動入庫復用。",
+        }
+
     def update_settings(args: dict) -> dict:
         fields = {}
         if "match_threshold" in args:
@@ -191,6 +221,16 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
                 "auto_apply_mode": {"type": "string", "enum": ["off", "threshold", "all"]},
             }},
         }},
+        {"type": "function", "function": {
+            "name": "apply_rules",
+            "description": "查詢當前生效的投遞規則（一崗一投/校招年限/閾值/地區加權/速率限制），用戶詢問規則或限制時調用",
+            "parameters": {"type": "object", "properties": {}},
+        }},
+        {"type": "function", "function": {
+            "name": "list_info_fields",
+            "description": "查詢用戶的個人信息庫（元信息表）與自動填寫規則，用戶詢問信息互補/自動填充時調用",
+            "parameters": {"type": "object", "properties": {}},
+        }},
     ]
     executor = {
         "get_status": get_status,
@@ -200,6 +240,8 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
         "list_applications": list_applications,
         "list_tasks": list_tasks,
         "update_settings": update_settings,
+        "apply_rules": apply_rules,
+        "list_info_fields": list_info_fields,
     }
     return tools, lambda name, args: executor[name](args or {})
 

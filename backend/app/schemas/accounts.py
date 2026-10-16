@@ -13,14 +13,14 @@ class AccountCreate(BaseModel):
     platform: str
     label: str = Field(min_length=1, max_length=64)
     login_identifier: str = Field(min_length=1, max_length=512)
-    password: str = Field(min_length=1, max_length=512)
+    password: str = Field(default="", max_length=512)  # 短信驗證碼登錄的平台可留空
     meta: dict | None = None
 
 
 class AccountUpdate(BaseModel):
     label: str | None = Field(default=None, min_length=1, max_length=64)
     login_identifier: str | None = Field(default=None, min_length=1, max_length=512)
-    password: str | None = Field(default=None, min_length=1, max_length=512)
+    password: str | None = Field(default=None, max_length=512)
     meta: dict | None = None
 
 
