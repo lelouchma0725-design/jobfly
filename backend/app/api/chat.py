@@ -278,20 +278,27 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
         updated = {}
         for k in keys:
             if k in args and args[k] not in (None, ""):
-                v = str(args[k]).strip()
-                db.execute(text(
-                    "UPDATE candidate_profiles SET hard_facts = "
-                    "jsonb_set(COALESCE(hard_facts,'{}'::jsonb), :k, to_jsonb(:v::text)) "
-                    "WHERE user_id=:u AND is_current=true"
-                ), {"k": "{" + k + "}", "v": v, "u": user_id})
-                db.execute(text(
-                    "INSERT INTO user_info_fields (user_id, key, value, source) VALUES (:u,:k,:v,'chat') "
-                    "ON CONFLICT (user_id, key) DO UPDATE SET value=EXCLUDED.value, source='chat', updated_at=now()"
-                ), {"u": user_id, "k": k, "v": v})
-                updated[k] = v
-        db.commit()
+                updated[k] = str(args[k]).strip()
         if not updated:
             return {"完成": False, "原因": f"請提供要更新的字段：{list(keys.values())}"}
+        # 畫像 hard_facts：Python 合併後 CAST 寫回
+        row = db.execute(text(
+            "SELECT hard_facts FROM candidate_profiles WHERE user_id=:u AND is_current=true"
+        ), {"u": user_id}).mappings().first()
+        if row is not None:
+            hf = dict(row["hard_facts"] or {})
+            hf.update(updated)
+            db.execute(text(
+                "UPDATE candidate_profiles SET hard_facts=CAST(:hf AS jsonb) "
+                "WHERE user_id=:u AND is_current=true"
+            ), {"hf": j(hf), "u": user_id})
+        # 元信息表同步
+        for k, v in updated.items():
+            db.execute(text(
+                "INSERT INTO user_info_fields (user_id, key, value, source) VALUES (:u,:k,:v,'chat') "
+                "ON CONFLICT (user_id, key) DO UPDATE SET value=EXCLUDED.value, source='chat', updated_at=now()"
+            ), {"u": user_id, "k": k, "v": v})
+        db.commit()
         return {"完成": True, "已更新": updated}
 
     def upsert_info_field(args: dict) -> dict:

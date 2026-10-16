@@ -45,15 +45,21 @@ def update_hard_fact(user: CurrentUser, db: DB, payload: HardFactUpdate) -> dict
     if payload.key not in HARD_FACT_KEYS:
         raise HTTPException(422, f"key 必須是 {sorted(HARD_FACT_KEYS)} 之一")
     key, value = payload.key, (payload.value or "").strip()
-    # 1) 畫像 hard_facts
-    db.execute(
-        text(
-            "UPDATE candidate_profiles SET hard_facts = "
-            "jsonb_set(COALESCE(hard_facts, '{}'::jsonb), :k, to_jsonb(:v::text)) "
-            "WHERE user_id=:uid AND is_current=true"
-        ),
-        {"k": "{" + key + "}", "v": value, "uid": user["id"]},
-    )
+    # 1) 畫像 hard_facts（Python 合併後 CAST 寫回，避免 jsonb_set 參數類型問題）
+    row = db.execute(
+        text("SELECT hard_facts FROM candidate_profiles WHERE user_id=:uid AND is_current=true"),
+        {"uid": user["id"]},
+    ).mappings().first()
+    if row is not None:
+        hf = dict(row["hard_facts"] or {})
+        hf[key] = value
+        db.execute(
+            text(
+                "UPDATE candidate_profiles SET hard_facts=CAST(:hf AS jsonb) "
+                "WHERE user_id=:uid AND is_current=true"
+            ),
+            {"hf": j(hf), "uid": user["id"]},
+        )
     # 2) 元信息表同步
     db.execute(
         text(
