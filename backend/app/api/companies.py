@@ -1,9 +1,10 @@
-"""關注公司管理（FR-1d 後半：讓用戶確定希望投遞/關注的公司）。"""
+"""關注公司管理 + 公司招聘官網自動發現。"""
 from __future__ import annotations
 
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -104,3 +105,41 @@ def delete_company(user: CurrentUser, db: DB, company_id: str) -> None:
     if not row:
         raise HTTPException(404, "公司不存在")
     db.commit()
+
+
+class DiscoverRequest(BaseModel):
+    name: str
+
+
+@router.post("/discover")
+def discover_company(user: CurrentUser, payload: DiscoverRequest) -> dict:
+    """按公司名自動發現招聘官網：LLM 給候選 + 實網探測驗證。"""
+    import re
+
+    import httpx as _httpx
+
+    from app.core.llm import chat_json
+
+    name = payload.name.strip()[:100]
+    out = chat_json(
+        "你熟悉各公司招聘官網。給出公司招聘官網地址候選。輸出 JSON："
+        '{"candidates": ["url1", "url2", ...], "careers_hint": "一句話說明"}',
+        f"公司名：{name}",
+        max_tokens=500,
+    )
+    verified = []
+    for url in (out.get("candidates") or [])[:6]:
+        if not url.startswith("http"):
+            continue
+        try:
+            r = _httpx.get(url, timeout=12, follow_redirects=True,
+                           headers={"User-Agent": "Mozilla/5.0"})
+            if r.status_code == 200:
+                m = re.search(r"<title>([^<]*)</title>", r.text, re.I)
+                verified.append({"url": str(r.url), "status": 200,
+                                 "title": (m.group(1).strip()[:80] if m else None)})
+            else:
+                verified.append({"url": url, "status": r.status_code, "title": None})
+        except Exception as exc:  # noqa: BLE001
+            verified.append({"url": url, "status": "unreachable", "title": str(exc)[:80]})
+    return {"name": name, "hint": out.get("careers_hint"), "candidates": verified}

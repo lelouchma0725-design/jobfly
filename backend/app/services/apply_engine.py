@@ -18,6 +18,7 @@ from app.config import settings as app_settings
 from app.core.audit import log_audit
 from app.core.jsonutil import j
 from app.services.form_mapping import build_candidate_payload, missing_fields
+from app.api.info_fields import save_answer
 from app.services.notifier import notify_with_fallback
 from app.services.optimize import (
     attach_cover_letter,
@@ -62,6 +63,13 @@ def create_applications_from_matches(db: Session, user_id: str) -> dict:
             SELECT m.user_id, m.posting_id, m.id, 'queued'
             FROM job_matches m JOIN job_postings p ON p.id = m.posting_id
             WHERE m.user_id = :uid AND {where} AND p.is_active = true
+              -- 公司級一崗一投：同一公司已有未終止投遞時跳過其餘崗位
+              AND NOT EXISTS (
+                SELECT 1 FROM applications a2
+                JOIN job_postings p2 ON p2.id = a2.posting_id
+                WHERE a2.user_id = :uid AND p2.company_name = p.company_name
+                  AND a2.status NOT IN ('aborted', 'duplicate_skip', 'not_supported')
+              )
             ON CONFLICT (user_id, posting_id) DO NOTHING
             """
         ),
@@ -557,6 +565,16 @@ def answer_and_resume(db: Session, task_id: str, user_id: str, answer: dict | No
         ),
         {"id": task_id, "a": j(answer or {})},
     )
+    # 回填答案自動存庫（元信息表），下次同類字段免問
+    for key, value in (answer or {}).items():
+        if key in ("confirmed",) or value in (None, ""):
+            continue
+        if isinstance(value, str) and value.strip():
+            try:
+                save_answer(db, user_id, key, value.strip())
+            except Exception:  # noqa: BLE001
+                logger.warning("元信息存庫失敗 %s=%s", key, value[:50])
+    db.commit()
     # 回填內容注入投遞上下文：answer 中與 payload 同名字段直接覆蓋
     db.execute(
         text(

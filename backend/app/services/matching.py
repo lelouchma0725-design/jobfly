@@ -87,6 +87,17 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
     hard_reqs = extract_hard_requirements(posting["description_text"] or posting["title"])
     failures = [r for r in hard_reqs if not _check_against(dict(profile), r)]
 
+    # 校招/應屆崗位的工作年限限制（投遞規則 R2：校招僅限應屆生）
+    if _is_campus_posting(posting):
+        years = (dict(profile).get("hard_facts") or {}).get("total_years") or 0
+        if years >= 3:
+            failures.append({
+                "field": "experience_years",
+                "kind": "experience_years",
+                "requirement": f"校招崗位僅限應屆生（工作年限 <3 年），候選人已有 {years} 年",
+                "passed": False,
+            })
+
     if failures:
         db.execute(
             text(
@@ -144,6 +155,18 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
     db.commit()
     return {"match_score": final_score, "hard_failures": [], "status": "new",
             "location_adjust": adjustment}
+
+
+def _is_campus_posting(posting: dict) -> bool:
+    """判斷是否校招/應屆類崗位（標題/JD/採集元數據）。"""
+    text = " ".join([
+        posting.get("title") or "",
+        posting.get("description_text") or "",
+        str((posting.get("raw") or {}).get("tab") or ""),
+        str((posting.get("raw") or {}).get("recruit_type") or ""),
+    ]).lower()
+    hints = ("校招", "校园", "应届", "應屆", "管培生", "培训生", "培訓生", "秋招", "春招", "2027届", "2027屆")
+    return any(h in text for h in hints)
 
 
 def _location_adjust(db: Session, user_id: str, posting_location: str | None) -> int:

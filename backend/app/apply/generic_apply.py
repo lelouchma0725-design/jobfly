@@ -83,10 +83,31 @@ class GenericApplyAdapter:
 
                 inputs = _collect_inputs(page)
                 unfilled_required: list[str] = []
+                auto_fill_log: list[str] = []
                 for inp in inputs:
                     if inp["type"] == "file":
                         continue
                     value, matched = _value_for(inp, p, ctx)
+                    # 元信息表互補：簡歷/畫像沒有 → 查個人信息庫（相似度 ≥50% 自動填）
+                    if not value and inp["editable"]:
+                        from app.api.info_fields import resolve_field
+                        from app.db import SessionLocal
+
+                        field_label = inp["label"] or inp["name"] or inp["placeholder"]
+                        if field_label:
+                            try:
+                                s = SessionLocal()
+                                try:
+                                    filled, src_key, score = resolve_field(
+                                        s, ctx.user_id, inp["name"], field_label)
+                                finally:
+                                    s.close()
+                                if filled:
+                                    value = filled
+                                    auto_fill_log.append(
+                                        f"{field_label} ← 信息庫[{src_key}] 相似度{score}")
+                            except Exception:  # noqa: BLE001
+                                pass
                     if value and inp["editable"]:
                         try:
                             page.locator(inp["selector"]).first.fill(value)
