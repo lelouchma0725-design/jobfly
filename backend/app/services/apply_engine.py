@@ -285,7 +285,7 @@ def run_application(db: Session, application_id: str, dry_run: bool = False, for
             "VALUES (:uid, :aid, :n, 'failed') RETURNING id"
         ),
         {"uid": app["user_id"], "aid": application_id, "n": app["attempts_count"] + 1},
-    ).mappings().one()
+    ).mappings().one()["id"]
     db.execute(
         text(
             "UPDATE applications SET status='in_progress', current_step='prepare', "
@@ -441,7 +441,8 @@ def _finish(db: Session, app: dict, application_id: str, status: str, reason: st
             attempt_id: str, attempt_result: str, error_code: str | None = None) -> dict:
     db.execute(
         text(
-            "UPDATE applications SET status=:st, status_reason=:r, current_step=NULL, "
+            "UPDATE applications SET status=CAST(:st AS application_status), status_reason=:r, "
+            "current_step=NULL, "
             "submitted_at=CASE WHEN :st='submitted' THEN now() ELSE submitted_at END, "
             "updated_at=now() WHERE id=:id"
         ),
@@ -449,7 +450,8 @@ def _finish(db: Session, app: dict, application_id: str, status: str, reason: st
     )
     db.execute(
         text(
-            "UPDATE application_attempts SET result=:r, error_code=:ec WHERE id=:id"
+            "UPDATE application_attempts SET result=CAST(:r AS attempt_result), error_code=:ec "
+            "WHERE id=:id"
         ),
         {"r": attempt_result, "ec": error_code, "id": attempt_id},
     )
@@ -466,7 +468,7 @@ def _create_manual_task(db: Session, app: dict, application_id: str, blocker: di
             INSERT INTO manual_tasks
               (user_id, application_id, task_type, question, options, screenshot_path,
                status, expires_at)
-            VALUES (:uid, :aid, :tt, :q, CAST(:opt AS jsonb), :shot, 'open', now() + interval '48 hours')
+            VALUES (:uid, :aid, CAST(:tt AS task_type), :q, CAST(:opt AS jsonb), :shot, 'open', now() + interval '48 hours')
             RETURNING id
             """
         ),
