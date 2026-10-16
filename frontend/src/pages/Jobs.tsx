@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { useT } from "../lib/i18n";
+import Pager from "../components/Pager";
 
 type Job = {
   id: string;
@@ -26,20 +28,25 @@ const STATUS_TEXT: Record<string, string> = {
 };
 
 export default function Jobs() {
+  const { t } = useT();
   const [items, setItems] = useState<Job[]>([]);
+  const [total, setTotal] = useState(0);
   const [q, setQ] = useState("");
   const [company, setCompany] = useState("");
   const [detail, setDetail] = useState<JobDetail | null>(null);
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const [limit, setLimit] = useState(20);
+  const [offset, setOffset] = useState(0);
 
   async function load() {
-    const params = new URLSearchParams();
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     if (q) params.set("q", q);
     if (company) params.set("company", company);
     try {
-      const res = await api<{ items: Job[] }>(`/api/jobs?${params}`);
+      const res = await api<{ items: Job[]; total: number }>(`/api/jobs?${params}`);
       setItems(res.items);
+      setTotal(res.total ?? 0);
     } catch {
       setMsg("讀取崗位失敗");
     }
@@ -47,15 +54,13 @@ export default function Jobs() {
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [limit, offset]);
 
   async function collect() {
     setBusy(true);
-    setMsg("正在採集你的關注公司（可能需要數分鐘）…");
+    setMsg("正在後台採集你的關注公司…稍後點擊搜索/刷新查看");
     try {
-      const r = await api<Record<string, unknown>>("/api/jobs/collect/run", { method: "POST" });
-      setMsg(`採集完成：新增 ${r.new}，更新 ${r.updated}，匹配 ${r.matched}，錯誤 ${r.errors}`);
-      await load();
+      await api("/api/jobs/collect/run", { method: "POST" });
     } catch (e) {
       setMsg(`採集失敗: ${(e as Error).message}`);
     } finally {
@@ -83,30 +88,27 @@ export default function Jobs() {
   }
 
   return (
-    <div className="page">      <main className="narrow">
+    <div>
+      <main>
         <div className="card wide">
-          <h2>崗位庫（FR-3a）</h2>
+          <h2>{t("jobBoard")}</h2>
           <div className="row wrap">
             <input placeholder="搜索職位關鍵詞" value={q} onChange={(e) => setQ(e.target.value)} />
-            <input
-              placeholder="公司名"
-              value={company}
-              onChange={(e) => setCompany(e.target.value)}
-            />
-            <button onClick={() => void load()}>搜索</button>
+            <input placeholder="公司名" value={company} onChange={(e) => setCompany(e.target.value)} />
+            <button onClick={() => { setOffset(0); void load(); }}>{t("search")}</button>
             <button className="ghost" disabled={busy} onClick={() => void collect()}>
-              立即採集我的關注公司
+              {t("collectNow")}
             </button>
           </div>
-          <p className="muted">每日 02:00 自動採集；也可手動觸發。點擊行查看詳情與匹配。</p>
+          <p className="muted">每日 02:00 自動採集；也可手動觸發（後台執行）。點擊行查看詳情。</p>
           <table>
             <thead>
               <tr>
-                <th>公司</th>
-                <th>職位</th>
-                <th>地點</th>
-                <th>來源</th>
-                <th>貼合度</th>
+                <th>{t("company")}</th>
+                <th>{t("jobTitle")}</th>
+                <th>{t("location")}</th>
+                <th>{t("source")}</th>
+                <th>{t("fitScore")}</th>
                 <th></th>
               </tr>
             </thead>
@@ -121,8 +123,14 @@ export default function Jobs() {
                     {j.match_score != null ? (
                       <b>{j.match_score}%</b>
                     ) : (
-                      <button className="ghost" onClick={(e) => { e.stopPropagation(); void score(j.id); }}>
-                        匹配
+                      <button
+                        className="ghost"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void score(j.id);
+                        }}
+                      >
+                        {t("match")}
                       </button>
                     )}
                   </td>
@@ -131,6 +139,16 @@ export default function Jobs() {
               ))}
             </tbody>
           </table>
+          <Pager
+            total={total}
+            limit={limit}
+            offset={offset}
+            onPage={(o) => setOffset(o)}
+            onLimit={(l) => {
+              setLimit(l);
+              setOffset(0);
+            }}
+          />
           {detail && (
             <div className="detail">
               <h3>
@@ -147,9 +165,7 @@ export default function Jobs() {
                 </p>
               )}
               {Array.isArray(detail.hard_failures) && detail.hard_failures.length > 0 && (
-                <p className="notice">
-                  硬性條件不符：{JSON.stringify(detail.hard_failures)}
-                </p>
+                <p className="notice">硬性條件不符：{JSON.stringify(detail.hard_failures)}</p>
               )}
               <div className="code" style={{ maxHeight: 240 }}>
                 {detail.description_text ?? "（無 JD 描述）"}
@@ -157,7 +173,7 @@ export default function Jobs() {
               <div className="row">
                 {detail.apply_url && (
                   <a href={detail.apply_url} target="_blank" rel="noreferrer">
-                    打開申請頁 ↗
+                    {t("openApply")}
                   </a>
                 )}
                 <button onClick={() => setDetail(null)} className="ghost">

@@ -20,7 +20,7 @@ _PROFILE_SYSTEM = """
   "experiences": [{"company": "公司", "title": "職位", "start": "開始", "end": "結束", "bullets": ["要點"]}],
   "education": [{"school": "學校", "degree": "學位", "major": "專業", "start": "開始", "end": "結束"}],
   "hard_facts": {"visa_status": "簽證狀態或null", "preferred_locations": ["城市"], "salary_expectation": "期望薪資或null", "availability": "可到崗時間或null", "total_years": 年限數字或null},
-  "suggested_roles": [{"title": "崗位", "fit_score": 50-100, "reasons": ["理由"], "demand_note": "市場需求一句話"}]
+  "suggested_roles": [{"title": "崗位", "fit_score": 50-100, "reasons": ["理由"], "demand_note": "市場需求一句話"}]  // 必須恰好 5 個，按 fit_score 從高到低排列
 }
 """
 
@@ -47,6 +47,11 @@ def generate_profile(db: Session, user_id: str, resume_version_id: str | None = 
         raise ValueError("沒有可用的簡歷版本，請先上傳並解析簡歷")
 
     profile = chat_json(_PROFILE_SYSTEM, f"簡歷：\n{row['content_md'][:12000]}")
+
+    # 推薦崗位：保證 5 個並按貼合度降序
+    roles = profile.get("suggested_roles") or []
+    roles.sort(key=lambda r: -(int(r.get("fit_score") or 0)))
+    profile["suggested_roles"] = roles[:5]
 
     # 舊畫像全部標記非當前
     db.execute(

@@ -1,24 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
+import { useT } from "../lib/i18n";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
-const QUICK_ACTIONS = [
-  "我現在的求職狀態如何？",
-  "帶我完成第一次投遞設置",
-  "立即採集最新崗位",
-  "看看我最匹配的崗位",
-  "我的投遞進度如何？",
-];
-
 export default function Home() {
-  const [messages, setMessages] = useState<Msg[]>([
-    {
-      role: "assistant",
-      content:
-        "你好！我是你的 AI 求職管家 🤖\n我可以幫你：查看求職狀態、採集最新崗位、分析匹配度、管理投遞進度。\n直接告訴我你想做什麼，或者點下面的快捷操作。",
-    },
-  ]);
+  const { t } = useT();
+  const [messages, setMessages] = useState<Msg[]>([{ role: "assistant", content: t("welcome") }]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -60,13 +48,13 @@ export default function Home() {
           {busy && (
             <div className="chat-msg assistant">
               <div className="chat-avatar">🤖</div>
-              <div className="chat-bubble typing">思考中…</div>
+              <div className="chat-bubble typing">{t("thinking")}</div>
             </div>
           )}
           <div ref={bottomRef} />
         </div>
         <div className="chat-quick">
-          {QUICK_ACTIONS.map((q) => (
+          {[t("quickStatus"), t("quickGuide"), t("quickCollect"), t("quickMatches"), t("quickApps")].map((q) => (
             <button key={q} className="ghost small" disabled={busy} onClick={() => void send(q)}>
               {q}
             </button>
@@ -74,13 +62,13 @@ export default function Home() {
         </div>
         <div className="chat-input">
           <input
-            placeholder="告訴我你想做什麼…"
+            placeholder={t("chatPlaceholder")}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && void send()}
           />
           <button disabled={busy} onClick={() => void send()}>
-            發送
+            {t("send")}
           </button>
         </div>
       </div>

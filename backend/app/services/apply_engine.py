@@ -104,14 +104,40 @@ def _preflight(payload: dict) -> dict | None:
 
 # ── 3. 上下文準備（簡歷版本選擇 + AI 微調 + CL + 本地文件）──────────────
 
+# 判斷需要英文簡歷的地點/地區關鍵詞（中國大陸以外）
+_EN_HINTS = (
+    "hong kong", "香港", "singapore", "london", "new york", "san francisco",
+    "tokyo", "seoul", "sydney", "toronto", "vancouver", "remote", "海外",
+    "united states", "united kingdom", "canada", "australia",
+)
+
+
+def _pick_resume_lang(app: dict) -> str:
+    """根據崗位地點/公司選擇簡歷語言：海外/香港 → en，否則 zh。"""
+    location = (app.get("location") or "").lower()
+    text = f"{location} {(app.get('description_text') or '')[:300]}".lower()
+    return "en" if any(h in text for h in _EN_HINTS) else "zh"
+
+
 def _prepare_context(db: Session, app: dict, payload: dict, settings_row: dict) -> apply_base.ApplyContext:
+    want_lang = _pick_resume_lang(app)
     version = db.execute(
         text(
             "SELECT id, content_md FROM resume_versions WHERE user_id=:uid "
-            "AND content_md IS NOT NULL ORDER BY version_no DESC LIMIT 1"
+            "AND content_md IS NOT NULL AND COALESCE(lang,'zh')=:lang "
+            "ORDER BY version_no DESC LIMIT 1"
         ),
-        {"uid": app["user_id"]},
+        {"uid": app["user_id"], "lang": want_lang},
     ).mappings().first()
+    if not version:
+        # 沒有對應語言的簡歷時回退到最新任意版本
+        version = db.execute(
+            text(
+                "SELECT id, content_md FROM resume_versions WHERE user_id=:uid "
+                "AND content_md IS NOT NULL ORDER BY version_no DESC LIMIT 1"
+            ),
+            {"uid": app["user_id"]},
+        ).mappings().first()
     if not version:
         raise RuntimeError("沒有可用的簡歷文本（請先解析簡歷）")
     version_id, resume_text = str(version["id"]), version["content_md"]
@@ -155,28 +181,68 @@ def _prepare_context(db: Session, app: dict, payload: dict, settings_row: dict) 
 
 
 def _load_account(db: Session, app: dict) -> dict | None:
-    """解密平台帳號（按投遞來源匹配，gtht 等登錄型投遞使用）。"""
-    from app.core.security import decrypt_field, get_dek_for_user
+    """解密平台帳號（按投遞來源匹配：gtht 等官網登錄型投遞）。
+
+    匹配規則：來源為 gtht 時 → 從「公司官網/gtht」帳號中按網址或標籤
+    匹配國泰海通；否則按 platform=來源 → 回退第一個 official 帳號。
+    返回 {id, login, password}。
+    """
+    from app.core.security import decrypt_field, decrypt_json, get_dek_for_user
+
+    dek = None
+
+    def _decrypt(row) -> dict | None:
+        nonlocal dek
+        try:
+            if dek is None:
+                dek = get_dek_for_user(db, app["user_id"])
+            return {
+                "id": str(row["id"]),
+                "login": decrypt_field(dek, row["login_identifier_enc"]),
+                "password": decrypt_field(dek, row["password_enc"]) or "",
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("平台帳號解密失敗 user=%s: %s", app["user_id"], exc)
+            return None
+
+    if app["source"] == "gtht":
+        rows = db.execute(
+            text(
+                "SELECT id, platform, label, login_identifier_enc, password_enc, meta_enc "
+                "FROM platform_accounts "
+                "WHERE user_id=:uid AND status != 'locked' "
+                "AND (platform IN ('gtht','official') "
+                "     OR label ILIKE '%國泰%' OR label ILIKE '%国泰%' OR label ILIKE '%gtht%') "
+                "ORDER BY created_at"
+            ),
+            {"uid": app["user_id"]},
+        ).mappings().all()
+        for row in rows:
+            meta = {}
+            if row["meta_enc"]:
+                try:
+                    if dek is None:
+                        dek = get_dek_for_user(db, app["user_id"])
+                    meta = decrypt_json(dek, row["meta_enc"])
+                except Exception:  # noqa: BLE001
+                    meta = {}
+            website = str(meta.get("website") or "").lower()
+            label = (row["label"] or "").lower()
+            if (row["platform"] == "gtht" or "gtht" in website
+                    or "國泰" in label or "国泰" in label or "gtht" in label):
+                return _decrypt(row)
 
     for platform in (app["source"], "official"):
         row = db.execute(
             text(
-                "SELECT login_identifier_enc, password_enc FROM platform_accounts "
+                "SELECT id, login_identifier_enc, password_enc FROM platform_accounts "
                 "WHERE user_id=:uid AND platform=:p AND status != 'locked' "
                 "ORDER BY created_at LIMIT 1"
             ),
             {"uid": app["user_id"], "p": platform},
         ).mappings().first()
         if row:
-            try:
-                dek = get_dek_for_user(db, app["user_id"])
-                return {
-                    "login": decrypt_field(dek, row["login_identifier_enc"]),
-                    "password": decrypt_field(dek, row["password_enc"]),
-                }
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("平台帳號解密失敗 user=%s: %s", app["user_id"], exc)
-                return None
+            return _decrypt(row)
     return None
 
 

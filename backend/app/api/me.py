@@ -13,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
+from app.core.jsonutil import j
 from app.core.security import decrypt_field, encrypt_field, get_dek_for_user
 from app.db import get_db
 from app.schemas.settings import SettingsUpdate
@@ -28,8 +29,26 @@ class PushChannelUpdate(BaseModel):
     value: str | None = None
 
 
+class ProfileUpdate(BaseModel):
+    full_name: str | None = None
+
+
 @router.get("/me")
 def read_me(user: CurrentUser) -> dict:
+    return user
+
+
+@router.patch("/me")
+def update_me(user: CurrentUser, db: DB, payload: ProfileUpdate) -> dict:
+    """更新個人資料（暱稱/姓名）。"""
+    if payload.full_name is not None:
+        name = payload.full_name.strip()[:64]
+        db.execute(
+            text("UPDATE profiles SET full_name=:n, updated_at=now() WHERE id=:id"),
+            {"n": name, "id": user["id"]},
+        )
+        db.commit()
+        user["full_name"] = name
     return user
 
 
@@ -56,6 +75,8 @@ def read_settings(user: CurrentUser, db: DB) -> dict:
 @router.patch("/me/settings")
 def update_settings(user: CurrentUser, db: DB, payload: SettingsUpdate) -> dict:
     fields = payload.model_dump(exclude_none=True)
+    if "preferred_locations" in fields:
+        fields["preferred_locations"] = j(fields["preferred_locations"] or [])
     if not fields:
         return read_settings(user, db)
     set_clause = ", ".join(f"{k} = :{k}" for k in fields)

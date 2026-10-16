@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { useT } from "../lib/i18n";
+import Pager from "../components/Pager";
 
 type App = {
   id: string;
@@ -29,16 +31,21 @@ const STATUS_TEXT: Record<string, string> = {
 };
 
 export default function Applications() {
+  const { t } = useT();
   const [items, setItems] = useState<App[]>([]);
+  const [total, setTotal] = useState(0);
   const [status, setStatus] = useState("");
   const [msg, setMsg] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [limit, setLimit] = useState(20);
+  const [offset, setOffset] = useState(0);
 
   async function load() {
-    const params = new URLSearchParams();
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     if (status) params.set("status", status);
     try {
-      setItems(await api<App[]>(`/api/applications?${params}`));
+      const r = await api<{ items: App[]; total: number }>(`/api/applications?${params}`);
+      setItems(r.items);
+      setTotal(r.total);
     } catch {
       setMsg("讀取投遞記錄失敗");
     }
@@ -46,11 +53,10 @@ export default function Applications() {
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status]);
+  }, [status, limit, offset]);
 
   async function run() {
-    setBusy(true);
-    setMsg("正在按設置生成投遞隊列並處理（每次最多 50 個，含瀏覽器操作，需數分鐘）…");
+    setMsg("正在按設置生成投遞隊列並處理…");
     try {
       const r = await api<{ created: { mode: string; created: number }; processed: Record<string, number> }>(
         "/api/applications/run",
@@ -63,8 +69,6 @@ export default function Applications() {
       await load();
     } catch (e) {
       setMsg(`執行失敗: ${(e as Error).message}`);
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -74,32 +78,34 @@ export default function Applications() {
   }
 
   return (
-    <div className="page">      <main className="narrow">
+    <div>
+      <main>
         <div className="card wide">
-          <h2>投遞記錄（FR-3b/3c）</h2>
+          <h2>{t("applications")}</h2>
           <div className="row wrap">
-            <select value={status} onChange={(e) => setStatus(e.target.value)}>
-              <option value="">全部狀態</option>
-              {Object.entries(STATUS_TEXT).map(([v, t]) => (
+            <select
+              value={status}
+              onChange={(e) => {
+                setStatus(e.target.value);
+                setOffset(0);
+              }}
+            >
+              <option value="">{t("all")}</option>
+              {Object.entries(STATUS_TEXT).map(([v, s]) => (
                 <option key={v} value={v}>
-                  {t}
+                  {s}
                 </option>
               ))}
             </select>
-            <button disabled={busy} onClick={() => void run()}>
-              立即生成並執行投遞隊列
-            </button>
+            <button onClick={() => void run()}>{t("runQueue")}</button>
           </div>
-          <p className="muted">
-            自動模式：達標自動投遞 / 全自動投遞由「投遞設置」控制；調度器每 30 分鐘處理到期隊列；
-            每用戶投遞間隔受設置中的速率限制保護。
-          </p>
+          <p className="muted">調度器每 30 分鐘處理到期隊列；每用戶投遞間隔受設置中的速率限制保護。</p>
           <table>
             <thead>
               <tr>
-                <th>公司 · 職位</th>
-                <th>貼合度</th>
-                <th>狀態</th>
+                <th>{t("company")} · {t("jobTitle")}</th>
+                <th>{t("fitScore")}</th>
+                <th>{t("status")}</th>
                 <th>嘗試</th>
                 <th>原因 / 下次重試</th>
                 <th></th>
@@ -115,23 +121,21 @@ export default function Applications() {
                   <td>{a.match_score != null ? `${a.match_score}%` : "-"}</td>
                   <td>{STATUS_TEXT[a.status] ?? a.status}</td>
                   <td>{a.attempts_count}</td>
-                  <td className="muted">
-                    {a.status_reason ?? a.next_retry_at ?? "-"}
-                  </td>
+                  <td className="muted cell-wrap">{a.status_reason ?? a.next_retry_at ?? "-"}</td>
                   <td>
                     {a.apply_url && (
                       <a href={a.apply_url} target="_blank" rel="noreferrer">
-                        頁面 ↗
+                        {t("openApply")}
                       </a>
                     )}
                     {["failed_retryable", "needs_input", "queued", "aborted"].includes(a.status) && (
                       <button className="ghost" onClick={() => void act(a.id, "retry")}>
-                        重試
+                        {t("retry")}
                       </button>
                     )}
                     {!["submitted", "aborted"].includes(a.status) && (
                       <button className="ghost" onClick={() => void act(a.id, "abort")}>
-                        放棄
+                        {t("abort")}
                       </button>
                     )}
                   </td>
@@ -139,6 +143,16 @@ export default function Applications() {
               ))}
             </tbody>
           </table>
+          <Pager
+            total={total}
+            limit={limit}
+            offset={offset}
+            onPage={(o) => setOffset(o)}
+            onLimit={(l) => {
+              setLimit(l);
+              setOffset(0);
+            }}
+          />
           <p className="notice">{msg}</p>
         </div>
       </main>

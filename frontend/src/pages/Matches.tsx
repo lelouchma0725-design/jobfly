@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { useT } from "../lib/i18n";
+import Pager from "../components/Pager";
 
 type Match = {
   id: string;
@@ -26,15 +28,21 @@ const STATUS_TEXT: Record<string, string> = {
 };
 
 export default function Matches() {
+  const { t } = useT();
   const [items, setItems] = useState<Match[]>([]);
+  const [total, setTotal] = useState(0);
   const [status, setStatus] = useState("");
   const [msg, setMsg] = useState("");
+  const [limit, setLimit] = useState(20);
+  const [offset, setOffset] = useState(0);
 
   async function load() {
-    const params = new URLSearchParams();
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     if (status) params.set("status", status);
     try {
-      setItems(await api<Match[]>(`/api/matches?${params}`));
+      const r = await api<{ items: Match[]; total: number }>(`/api/matches?${params}`);
+      setItems(r.items);
+      setTotal(r.total);
     } catch {
       setMsg("讀取匹配結果失敗");
     }
@@ -42,18 +50,25 @@ export default function Matches() {
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status]);
+  }, [status, limit, offset]);
 
   return (
-    <div className="page">      <main className="narrow">
+    <div>
+      <main>
         <div className="card wide">
-          <h2>我的崗位匹配（FR-1f）</h2>
+          <h2>{t("myMatches")}</h2>
           <div className="row">
-            <select value={status} onChange={(e) => setStatus(e.target.value)}>
-              <option value="">全部狀態</option>
-              {Object.entries(STATUS_TEXT).map(([v, t]) => (
+            <select
+              value={status}
+              onChange={(e) => {
+                setStatus(e.target.value);
+                setOffset(0);
+              }}
+            >
+              <option value="">{t("all")}</option>
+              {Object.entries(STATUS_TEXT).map(([v, s]) => (
                 <option key={v} value={v}>
-                  {t}
+                  {s}
                 </option>
               ))}
             </select>
@@ -61,11 +76,11 @@ export default function Matches() {
           <table>
             <thead>
               <tr>
-                <th>公司</th>
-                <th>職位</th>
-                <th>貼合度</th>
-                <th>狀態</th>
-                <th>理由</th>
+                <th>{t("company")}</th>
+                <th>{t("jobTitle")}</th>
+                <th>{t("fitScore")}</th>
+                <th>{t("status")}</th>
+                <th>{t("reasons")}</th>
                 <th></th>
               </tr>
             </thead>
@@ -78,11 +93,11 @@ export default function Matches() {
                     <b>{m.match_score != null ? `${m.match_score}%` : "不符"}</b>
                   </td>
                   <td>{STATUS_TEXT[m.status] ?? m.status}</td>
-                  <td className="muted">{m.reasons.join("；") || "—"}</td>
+                  <td className="muted cell-wrap">{m.reasons.join("；") || "—"}</td>
                   <td>
                     {m.apply_url && (
                       <a href={m.apply_url} target="_blank" rel="noreferrer">
-                        申請頁 ↗
+                        {t("openApply")}
                       </a>
                     )}
                   </td>
@@ -90,6 +105,16 @@ export default function Matches() {
               ))}
             </tbody>
           </table>
+          <Pager
+            total={total}
+            limit={limit}
+            offset={offset}
+            onPage={(o) => setOffset(o)}
+            onLimit={(l) => {
+              setLimit(l);
+              setOffset(0);
+            }}
+          />
           <p className="notice">{msg}</p>
         </div>
       </main>

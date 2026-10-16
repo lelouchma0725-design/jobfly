@@ -114,20 +114,25 @@ def parse_document(db: Session, doc_id: str, user_id: str, storage_path: str, mi
 def _create_resume_version(
     db: Session, doc_id: str, user_id: str, raw_text: str, structured: dict
 ) -> None:
-    """把解析結果落成 resume_versions 版本 1（原始版）。"""
+    """把解析結果落成 resume_versions 版本 1（原始版，含語言標記）。"""
     version_no = db.execute(
         text(
             "SELECT COALESCE(MAX(version_no), 0) + 1 AS n FROM resume_versions WHERE user_id = :uid"
         ),
         {"uid": user_id},
     ).mappings().one()["n"]
+    lang = db.execute(
+        text("SELECT COALESCE(lang, 'zh') AS l FROM user_documents WHERE id=:id"),
+        {"id": doc_id},
+    ).mappings().first()
+    doc_lang = (lang["l"] if lang else "zh") or "zh"
 
     db.execute(
         text(
             """
             INSERT INTO resume_versions
-              (user_id, source_document_id, version_no, content_md, created_by)
-            VALUES (:uid, :doc, :vn, :content, 'user')
+              (user_id, source_document_id, version_no, content_md, created_by, lang)
+            VALUES (:uid, :doc, :vn, :content, 'user', :lang)
             ON CONFLICT (user_id, version_no) DO NOTHING
             """
         ),
@@ -136,6 +141,7 @@ def _create_resume_version(
             "doc": doc_id,
             "vn": version_no,
             "content": _structured_to_markdown(structured) or raw_text[:30000],
+            "lang": doc_lang,
         },
     )
     db.commit()

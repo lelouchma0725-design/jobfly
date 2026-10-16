@@ -25,7 +25,6 @@ const PLATFORMS: Record<string, string> = {
   job51: "前程無憂",
   linkedin: "LinkedIn",
   indeed: "Indeed",
-  gtht: "國泰海通證券",
   other: "其他",
 };
 
@@ -39,7 +38,7 @@ const STATUS: Record<string, string> = {
 
 export default function Accounts() {
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [form, setForm] = useState({ platform: "workday", label: "", id: "", password: "" });
+  const [form, setForm] = useState({ platform: "official", label: "", id: "", password: "", website: "" });
   const [editing, setEditing] = useState<string | null>(null);
   const [msg, setMsg] = useState("");
 
@@ -75,10 +74,11 @@ export default function Accounts() {
             label: form.label,
             login_identifier: form.id,
             password: form.password,
+            meta: form.website ? { website: form.website } : null,
           }),
         });
       }
-      setForm({ platform: "workday", label: "", id: "", password: "" });
+      setForm({ platform: "official", label: "", id: "", password: "", website: "" });
       setEditing(null);
       setMsg("已保存（帳密已加密存儲）");
       await load();
@@ -96,7 +96,7 @@ export default function Accounts() {
   return (
     <div className="page">      <main className="narrow">
         <div className="card wide">
-          <h2>招聘平台帳號（FR-1d）</h2>
+          <h2>招聘平台帳號</h2>
           <p className="muted">
             帳號密碼經 AES-256 信封加密存儲，數據庫中不存明文；登錄態 Cookie 同樣加密保存。
             獵聘/Boss 等平台首期僅用於採集。
@@ -130,6 +130,11 @@ export default function Accounts() {
               value={form.password}
               onChange={(e) => setForm({ ...form, password: e.target.value })}
               required={!editing}
+            />
+            <input
+              placeholder="官網網址（可選，如 https://hr.gtht.com）"
+              value={form.website}
+              onChange={(e) => setForm({ ...form, website: e.target.value })}
             />
             <button type="submit">{editing ? "保存修改" : "添加帳號"}</button>
             {editing && (

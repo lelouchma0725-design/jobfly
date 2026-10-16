@@ -75,7 +75,7 @@ export default function Companies() {
   return (
     <div className="page">      <main className="narrow">
         <div className="card wide">
-          <h2>關注公司（FR-1d）</h2>
+          <h2>關注公司</h2>
           <p className="muted">
             每日定時任務會合併所有用戶的關注公司，去重後採集其官網/ATS 招聘信息。
           </p>
@@ -104,7 +104,6 @@ export default function Companies() {
               <option value="workday">Workday</option>
               <option value="greenhouse">Greenhouse</option>
               <option value="lever">Lever</option>
-              <option value="gtht">國泰海通證券</option>
               <option value="linkedin">LinkedIn</option>
             </select>
             <input
