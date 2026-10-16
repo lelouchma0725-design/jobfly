@@ -44,18 +44,27 @@ ANSWER_WHITELIST = {
 
 def create_applications_from_matches(db: Session, user_id: str) -> dict:
     st = db.execute(
-        text("SELECT auto_apply_mode, match_threshold FROM user_settings WHERE user_id=:uid"),
+        text(
+            "SELECT auto_apply_mode, match_threshold, campus_preference "
+            "FROM user_settings WHERE user_id=:uid"
+        ),
         {"uid": user_id},
     ).mappings().first()
     mode = st["auto_apply_mode"] if st else "threshold"
     if mode == "off":
         return {"mode": "off", "created": 0}
     threshold = st["match_threshold"] if st else 70
+    pref = (st["campus_preference"] if st else "both") or "both"
     where = "m.status IN ('new','pushed') AND m.match_score IS NOT NULL"
     params: dict = {"uid": user_id}
     if mode == "threshold":
         where += " AND m.match_score >= :th"
         params["th"] = threshold
+    campus_where = ""
+    if pref == "society":
+        campus_where = "AND p.is_campus = false"
+    elif pref == "campus":
+        campus_where = "AND p.is_campus = true"
     result = db.execute(
         text(
             f"""
@@ -63,6 +72,7 @@ def create_applications_from_matches(db: Session, user_id: str) -> dict:
             SELECT m.user_id, m.posting_id, m.id, 'queued'
             FROM job_matches m JOIN job_postings p ON p.id = m.posting_id
             WHERE m.user_id = :uid AND {where} AND p.is_active = true
+              {campus_where}
               -- 公司級一崗一投：同一公司已有未終止投遞時跳過其餘崗位
               AND NOT EXISTS (
                 SELECT 1 FROM applications a2
@@ -577,6 +587,34 @@ def answer_and_resume(db: Session, task_id: str, user_id: str, answer: dict | No
             except Exception:  # noqa: BLE001
                 logger.warning("元信息存庫失敗 %s=%s", key, value[:50])
     db.commit()
+    # 適配器專屬人工回填（如中信：用戶官網自行提交後確認 → 直接標記已投遞）
+    if task["task_type"] == "citics_manual":
+        try:
+            from app.apply.citics_apply import merge_manual_answer
+
+            app_row = _load_application(db, str(task["application_id"]))
+            payload = build_candidate_payload(db, user_id)
+            _merge_answers(db, str(task["application_id"]), payload)
+            ctx = _prepare_context(db, app_row, payload, {})
+            merged = merge_manual_answer(ctx, answer or {})
+            if merged.get("submitted"):
+                db.execute(
+                    text("SELECT id FROM application_attempts WHERE application_id=:aid ORDER BY created_at DESC LIMIT 1"),
+                    {"aid": task["application_id"]},
+                )
+                attempt = db.execute(
+                    text("SELECT id FROM application_attempts WHERE application_id=:aid ORDER BY created_at DESC LIMIT 1"),
+                    {"aid": task["application_id"]},
+                ).mappings().first()
+                _finish(db, app_row, str(task["application_id"]), "submitted",
+                        f"用戶在官網完成申請（人工確認）: {merged['external_ref']}",
+                        str(attempt["id"]) if attempt else "",
+                        "submitted")
+                log_audit(db, user_id, "application.submitted", "applications",
+                          str(task["application_id"]), {"mode": "manual_confirmed"})
+                return {"task": "answered", "application": {"status": "submitted"}}
+        except Exception:  # noqa: BLE001
+            logger.exception("citics 人工回填處理失敗")
     # 回填內容注入投遞上下文：answer 中與 payload 同名字段直接覆蓋
     db.execute(
         text(

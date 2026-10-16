@@ -83,6 +83,16 @@ export default function ProfileInfo() {
     }
   }
 
+  async function saveHardFact(key: string, value: string) {
+    try {
+      await api("/api/me/hard-facts", { method: "PUT", body: JSON.stringify({ key, value }) });
+      setMsg("已保存（畫像與元信息已同步）");
+      await load();
+    } catch (e) {
+      setMsg(`保存失敗: ${(e as Error).message}`);
+    }
+  }
+
   async function delField(key: string) {
     await api(`/api/me/info-fields/${encodeURIComponent(key)}`, { method: "DELETE" });
     await load();
@@ -115,9 +125,29 @@ export default function ProfileInfo() {
               {Object.entries(data?.profile.hard_facts ?? {}).map(([k, v]) => (
                 <tr key={k}>
                   <td className="muted">{FACT_KEYS[k] ?? k}</td>
-                  <td>{Array.isArray(v) ? v.join("、") : String(v ?? "—")}</td>
+                  <td>
+                    <input
+                      defaultValue={Array.isArray(v) ? (v as string[]).join("、") : String(v ?? "")}
+                      style={{ minWidth: 280 }}
+                      onBlur={(e) => void saveHardFact(k, e.target.value)}
+                    />
+                  </td>
                 </tr>
               ))}
+              {(["visa_status", "preferred_locations", "salary_expectation", "availability", "total_years"] as const)
+                .filter((k) => !(data?.profile.hard_facts ?? {})[k])
+                .map((k) => (
+                  <tr key={k}>
+                    <td className="muted">{FACT_KEYS[k] ?? k}</td>
+                    <td>
+                      <input
+                        placeholder="未填寫，點此補充"
+                        style={{ minWidth: 280 }}
+                        onBlur={(e) => e.target.value && void saveHardFact(k, e.target.value)}
+                      />
+                    </td>
+                  </tr>
+                ))}
               <tr>
                 <td className="muted">教育</td>
                 <td className="cell-wrap">
@@ -144,6 +174,7 @@ export default function ProfileInfo() {
               </tr>
             </tbody>
           </table>
+          <p className="muted">硬性事實可直接修改：保存後會同步到畫像與元信息表（投遞時以你手動維護的為準）。</p>
           {data?.profile.generated_at && (
             <p className="muted">畫像生成於：{data.profile.generated_at.slice(0, 10)}（如需更新請到「AI 畫像」重新生成）</p>
           )}

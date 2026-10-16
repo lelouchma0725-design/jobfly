@@ -87,16 +87,33 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
     hard_reqs = extract_hard_requirements(posting["description_text"] or posting["title"])
     failures = [r for r in hard_reqs if not _check_against(dict(profile), r)]
 
-    # 校招/應屆崗位的工作年限限制（投遞規則 R2：校招僅限應屆生）
-    if _is_campus_posting(posting):
-        years = (dict(profile).get("hard_facts") or {}).get("total_years") or 0
-        if years >= 3:
-            failures.append({
-                "field": "experience_years",
-                "kind": "experience_years",
-                "requirement": f"校招崗位僅限應屆生（工作年限 <3 年），候選人已有 {years} 年",
-                "passed": False,
-            })
+    # 校招/社招偏好與職級適配（投遞規則 R2 修訂版）：
+    # - 用戶偏好只投社招 → 校招崗位硬性過濾
+    # - 用戶允許投校招 → 有工作經歷者不攔截，但降權（職級不適配）
+    campus_adjust = 0
+    st = db.execute(
+        text("SELECT campus_preference FROM user_settings WHERE user_id=:u"),
+        {"u": user_id},
+    ).mappings().first()
+    preference = (st["campus_preference"] if st else "both") or "both"
+    is_campus = bool(posting.get("is_campus")) or _is_campus_posting(posting)
+    years = (dict(profile).get("hard_facts") or {}).get("total_years") or 0
+    if is_campus and preference == "society":
+        failures.append({
+            "field": "campus_preference",
+            "kind": "other",
+            "requirement": "用戶設置為只投社招，校招崗位已過濾",
+            "passed": False,
+        })
+    elif is_campus and years >= 1:
+        campus_adjust = -15  # 校招職級不適配（有工作經歷）降權
+    elif (not is_campus) and preference == "campus":
+        failures.append({
+            "field": "campus_preference",
+            "kind": "other",
+            "requirement": "用戶設置為只投校招，社招崗位已過濾",
+            "passed": False,
+        })
 
     if failures:
         db.execute(
@@ -123,12 +140,13 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
     )
     scored = chat_json(_SCORE_SYSTEM, prompt)
 
-    # 地區權重調整（期望城市加權，非期望城市適度降權）
-    adjustment = _location_adjust(db, user_id, posting["location"])
+    # 地區權重調整（期望城市加權，非期望城市適度降權）+ 校招職級適配
+    adjustment = _location_adjust(db, user_id, posting["location"]) + campus_adjust
     final_score = int(scored["match_score"]) + adjustment
     final_score = min(max(final_score, 50), 100)
     breakdown = scored.get("breakdown") or {}
-    breakdown["location_adjust"] = adjustment
+    breakdown["location_adjust"] = adjustment - campus_adjust
+    breakdown["campus_adjust"] = campus_adjust
 
     db.execute(
         text(
