@@ -1,10 +1,7 @@
-import Header from "../components/Header";
 
 export default function Dashboard() {
   return (
-    <div className="page">
-      <Header />
-      <main>
+    <div className="page">      <main>
         <div className="card">
           <h2>歡迎使用求職投遞助手</h2>
           <p className="muted">
