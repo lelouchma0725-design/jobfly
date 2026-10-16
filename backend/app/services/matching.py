@@ -85,7 +85,11 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
         raise ValueError("崗位不存在")
 
     hard_reqs = extract_hard_requirements(posting["description_text"] or posting["title"])
-    failures = [r for r in hard_reqs if not _check_against(dict(profile), r)]
+    # location 類要求不硬攔截（交給地區加權處理：命中加分、未命中降分）
+    failures = [
+        r for r in hard_reqs
+        if r.get("kind") != "location" and not _check_against(dict(profile), r)
+    ]
 
     # 校招/社招偏好與職級適配（投遞規則 R2 修訂版）：
     # - 用戶偏好只投社招 → 校招崗位硬性過濾
