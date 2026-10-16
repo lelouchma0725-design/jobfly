@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
             "缺少關鍵環境變量: %s —— /healthz 可用，但對應功能將在首次使用時報錯（參考 backend/.env.example）",
             ", ".join(missing),
         )
-    logger.info("JobFly backend starting (env=%s)", settings.app_env)
+    logger.info("JobsComing backend starting (env=%s)", settings.app_env)
     if not missing:
         try:
             from app.core.scheduler import start_scheduler, stop_scheduler
@@ -37,10 +37,10 @@ async def lifespan(app: FastAPI):
     from app.core.scheduler import stop_scheduler
 
     stop_scheduler()
-    logger.info("JobFly backend stopped")
+    logger.info("JobsComing backend stopped")
 
 
-app = FastAPI(title="JobFly API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="JobsComing API", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

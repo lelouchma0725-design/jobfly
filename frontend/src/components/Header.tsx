@@ -22,7 +22,7 @@ export default function Header() {
     <header>
       <h1>
         <Link to="/" style={{ color: "inherit", textDecoration: "none" }}>
-          JobFly<span className="muted"> · {t("aiAssistant")}</span>
+          JobsComing<span className="muted"> · {t("aiAssistant")}</span>
         </Link>
       </h1>
       <nav>
