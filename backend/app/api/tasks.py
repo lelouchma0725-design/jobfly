@@ -22,6 +22,49 @@ class TaskAnswer(BaseModel):
     answer: dict | None = None
 
 
+@router.get("/{task_id}/fill-plan")
+def task_fill_plan(user: CurrentUser, db: DB, task_id: str) -> dict:
+    """RPA 輔助：為人工投遞生成「填寫方案」（按當前資料整理好的答案，可一鍵複製）。"""
+    from app.services.apply_engine import _load_application
+    from app.services.form_mapping import build_candidate_payload
+
+    task = db.execute(
+        text("SELECT application_id FROM manual_tasks WHERE id=:id AND user_id=:uid"),
+        {"id": task_id, "uid": user["id"]},
+    ).mappings().first()
+    if not task:
+        raise HTTPException(404, "任務不存在")
+    app = _load_application(db, str(task["application_id"]))
+    if not app:
+        raise HTTPException(404, "投遞不存在")
+    payload = build_candidate_payload(db, user["id"])
+    skills = ", ".join(s["name"] for s in (payload.get("skills") or []))
+    exp_lines = []
+    for e in (payload.get("experiences") or [])[:5]:
+        exp_lines.append(
+            f"{e.get('start')} ~ {e.get('end')} {e.get('company')} {e.get('title')}："
+            + "；".join((e.get("bullets") or [])[:2])
+        )
+    edu_lines = [
+        f"{e.get('school')} {e.get('degree')} {e.get('major')}"
+        for e in (payload.get("education") or [])
+    ]
+    fields = {
+        "姓名": payload.get("full_name") or "（未填）",
+        "手機": payload.get("phone") or "（未填）",
+        "郵箱": payload.get("email") or "（未填）",
+        "簽證狀態": payload.get("visa_status") or "（未填）",
+        "期望薪資": payload.get("salary_expectation") or "（未填）",
+        "可到崗時間": payload.get("availability") or "（未填）",
+        "技能（複製到技能欄）": skills,
+        "工作經歷（最多 5 段，每段兩行內）": "\n".join(exp_lines) or "（未填）",
+        "教育（複製到教育欄）": "；".join(edu_lines) or "（未填）",
+    }
+    text_block = "\n".join(f"{k}：{v}" for k, v in fields.items())
+    return {"fields": fields, "copy_text": text_block, "company": app["company_name"],
+            "title": app["title"]}
+
+
 @router.get("")
 def list_tasks(user: CurrentUser, db: DB, status: str = "open") -> list[dict]:
     rows = db.execute(

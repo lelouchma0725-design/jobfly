@@ -15,6 +15,7 @@ _PROFILE_SYSTEM = """
 3. 每個推薦崗位給出 2-3 條理由，以及一句市場需求說明。
 輸出 JSON（不要輸出其他內容）：
 {
+  "candidate_name": "候選人真實姓名（簡歷首部姓名，無法確定則空字符串）",
   "summary": "一句話概覽",
   "skills": [{"name": "技能", "level": 1-5, "years": 年數或null}],
   "experiences": [{"company": "公司", "title": "職位", "start": "開始", "end": "結束", "bullets": ["要點"]}],
@@ -82,6 +83,49 @@ def generate_profile(db: Session, user_id: str, resume_version_id: str | None = 
             "model": "deepseek-chat",  # TODO: 從 settings 讀取
         },
     ).mappings().one()
+    db.commit()
+
+    # ── 元信息表同步（畫像提取 → 個人信息庫，source=resume）──
+    hf = profile.get("hard_facts") or {}
+    hard_keys = {
+        "visa_status": "簽證狀態", "preferred_locations": "期望城市",
+        "salary_expectation": "期望薪資", "availability": "可到崗時間",
+        "total_years": "工作年限",
+    }
+    for key in hard_keys:
+        v = hf.get(key)
+        if v in (None, "", []):
+            continue
+        db.execute(
+            text(
+                "INSERT INTO user_info_fields (user_id, key, value, source) VALUES (:u,:k,:v,'resume') "
+                "ON CONFLICT (user_id, key) DO UPDATE SET value=EXCLUDED.value, "
+                "source='resume', updated_at=now()"
+            ),
+            {"u": user_id, "k": key,
+             "v": "、".join(v) if isinstance(v, list) else str(v)},
+        )
+    cname = str(profile.get("candidate_name") or "").strip()
+    if cname:
+        db.execute(
+            text(
+                "INSERT INTO user_info_fields (user_id, key, value, source) VALUES (:u,'candidate_name',:v,'resume') "
+                "ON CONFLICT (user_id, key) DO UPDATE SET value=EXCLUDED.value, "
+                "source='resume', updated_at=now()"
+            ),
+            {"u": user_id, "v": cname[:64]},
+        )
+        # 真實姓名回填 profiles.full_name（當前是佔位名時覆蓋）
+        row_p = db.execute(
+            text("SELECT full_name, email FROM profiles WHERE id=:u"), {"u": user_id}
+        ).mappings().first()
+        email_prefix = (row_p["email"] or "").split("@")[0] if row_p else ""
+        if row_p is not None and (not row_p["full_name"]
+                                  or row_p["full_name"] in ("管理員", email_prefix)):
+            db.execute(
+                text("UPDATE profiles SET full_name=:n, updated_at=now() WHERE id=:u"),
+                {"n": cname[:64], "u": user_id},
+            )
     db.commit()
     return str(new_id["id"])
 

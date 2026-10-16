@@ -61,10 +61,25 @@ export default function Matches() {
   }, []);
 
   async function rematch() {
-    setMsg("正在後台重新匹配（用當前畫像重算所有貼合度）…");
+    setMsg("正在後台全量重新匹配（補評缺失崗位 + 重算舊分數）…");
     try {
       await api("/api/matches/rematch", { method: "POST" });
-      setMsg("已開始重新匹配，稍後刷新查看最新分數");
+      // 輪詢進度直到全部補評完成
+      let tries = 0;
+      const timer = window.setInterval(async () => {
+        tries += 1;
+        try {
+          const st = await api<{ remaining_missing: number; total_matches: number }>("/api/matches/rematch-status");
+          setMsg(`重新匹配中… 剩餘未評分 ${st.remaining_missing} 個（已匹配 ${st.total_matches} 個）`);
+          if (st.remaining_missing === 0 || tries > 60) {
+            window.clearInterval(timer);
+            setMsg(st.remaining_missing === 0 ? "✅ 全部崗位已匹配完成" : "匹配仍在後台進行，可稍後再點「刷新」");
+            await load();
+          }
+        } catch {
+          window.clearInterval(timer);
+        }
+      }, 5000);
     } catch (e) {
       setMsg(`重新匹配失敗: ${(e as Error).message}`);
     }
@@ -104,6 +119,9 @@ export default function Matches() {
                 </option>
               ))}
             </select>
+            <button className="ghost" onClick={() => { void load(); setMsg("已刷新"); }}>
+              🔃 刷新
+            </button>
             <button className="ghost" onClick={() => void rematch()}>
               🔄 重新匹配
             </button>

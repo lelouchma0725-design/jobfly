@@ -20,6 +20,8 @@ const TYPE_TEXT: Record<string, string> = {
   missing_field: "缺字段",
   missing_file: "缺文件",
   confirm_content: "確認內容",
+  citics_manual: "中信官網投遞",
+  manual_citics_login: "中信官網投遞",
   other: "其他",
 };
 
@@ -57,6 +59,16 @@ export default function Tasks() {
     }
   }
 
+  async function fillPlan(task: Task) {
+    try {
+      const p = await api<{ copy_text: string }>(`/api/manual-tasks/${task.id}/fill-plan`);
+      await navigator.clipboard.writeText(p.copy_text);
+      setMsg("✅ 填寫方案已複製到剪貼板，粘貼到官網對應欄位即可");
+    } catch (e) {
+      setMsg(`獲取填寫方案失敗: ${(e as Error).message}`);
+    }
+  }
+
   async function cancel(task: Task) {
     if (!confirm("取消後該投遞將標記為放棄，確認？")) return;
     await api(`/api/manual-tasks/${task.id}/cancel`, { method: "POST" });
@@ -66,7 +78,7 @@ export default function Tasks() {
   return (
     <div className="page">      <main className="narrow">
         <div className="card wide">
-          <h2>待你處理（FR-3c 直接框）</h2>
+          <h2>待你處理</h2>
           <p className="muted">
             投遞遇到驗證碼、缺字段、缺文件時會暫停並在這裡等你。填寫/確認後系統自動在原位置繼續投遞。
           </p>
@@ -77,6 +89,11 @@ export default function Tasks() {
                 [{TYPE_TEXT[t.task_type] ?? t.task_type}] {t.company_name} · {t.title}
               </h3>
               <p>{t.question}</p>
+              {["citics_manual", "manual_citics_login"].includes(t.task_type) && (
+                <button className="ghost" onClick={() => void fillPlan(t)}>
+                  📋 一鍵複製填寫方案（按官網要求整理好的答案）
+                </button>
+              )}
               <div className="column">
                 {Object.entries(t.options ?? {}).map(([key, opt]) => (
                   <label key={key} className="row">

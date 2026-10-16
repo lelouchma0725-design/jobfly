@@ -109,6 +109,20 @@ class GenericApplyAdapter:
                             except Exception:  # noqa: BLE001
                                 pass
                     if value and inp["editable"]:
+                        # 官網格子校驗適配：字符上限截斷、數字範圍裁剪，不卡住
+                        raw = value
+                        if inp.get("maxlength") and len(value) > inp["maxlength"]:
+                            value = value[: inp["maxlength"]]
+                        if inp.get("type") == "number" and inp.get("max") is not None:
+                            try:
+                                if float(value) > float(inp["max"]):
+                                    value = str(inp["max"])
+                            except (TypeError, ValueError):  # noqa: BLE001
+                                pass
+                        if value != raw:
+                            auto_fill_log.append(
+                                f"{inp.get('label') or inp.get('name')}: 按官網要求截斷/調整 "
+                                f"({len(raw)}→{len(value)} 字符)")
                         try:
                             page.locator(inp["selector"]).first.fill(value)
                         except Exception:  # noqa: BLE001
@@ -191,15 +205,23 @@ def _collect_inputs(page) -> list[dict]:
             : (el.closest('label') ? el.closest('label').innerText.trim() : '');
           const id = 'jobfly_field_' + i;
           if (!el.id) el.id = id;
+          const hint = (el.closest('.form-item, .el-form-item, div, label') || el)
+            ? ((el.closest('.el-form-item') || el.closest('label') || el.parentElement) || {}).innerText || ''
+            : '';
           return {
             selector: '#' + el.id,
             type: (el.type || el.tagName.toLowerCase()),
             name: el.name || '',
             placeholder: el.placeholder || '',
             label: label,
+            hint: hint.trim().slice(0, 300),
             required: el.required || el.getAttribute('aria-required') === 'true',
             editable: !(el.readOnly || el.disabled),
             tag: el.tagName.toLowerCase(),
+            maxlength: el.maxLength > 0 ? el.maxLength : null,
+            pattern: el.pattern || null,
+            min: el.min || null,
+            max: el.max || null,
           };
         })
         """

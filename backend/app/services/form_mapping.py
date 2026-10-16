@@ -67,11 +67,14 @@ def build_candidate_payload(db: Session, user_id: str) -> dict:
     ).mappings().all()
     hard_keys = {
         "visa_status", "preferred_locations", "salary_expectation", "availability",
-        "total_years", "full_name", "email", "phone",
+        "total_years", "full_name", "email", "phone", "candidate_name",
     }
     for r in info:
         if r["key"] in hard_keys and r["value"]:
             payload[r["key"]] = r["value"]
+    # 姓名兜底：元信息 full_name > profiles.full_name > 簡歷提取的 candidate_name
+    if not payload.get("full_name") and payload.get("candidate_name"):
+        payload["full_name"] = payload["candidate_name"]
     return payload
 
 
