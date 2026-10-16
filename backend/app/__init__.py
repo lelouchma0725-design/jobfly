@@ -1,1 +1,1 @@
-"""JobFly backend application package."""
+"""JobsComing backend application package."""

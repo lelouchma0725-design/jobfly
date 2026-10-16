@@ -42,7 +42,7 @@ def _list_jobs(board_token: str, timeout: float = 20.0) -> list[dict]:
     resp = httpx.get(
         f"https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs",
         timeout=timeout,
-        headers={"User-Agent": "Mozilla/5.0 (JobFly/0.1)"},
+        headers={"User-Agent": "Mozilla/5.0 (JobsComing/0.1)"},
     )
     resp.raise_for_status()
     return resp.json().get("jobs") or []
@@ -56,7 +56,7 @@ def _job_detail(board_token: str, job_id: int, timeout: float = 20.0) -> dict | 
             resp = httpx.get(
                 f"https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs/{job_id}",
                 timeout=timeout,
-                headers={"User-Agent": "Mozilla/5.0 (JobFly/0.1)"},
+                headers={"User-Agent": "Mozilla/5.0 (JobsComing/0.1)"},
             )
             resp.raise_for_status()
             return resp.json()

@@ -37,7 +37,7 @@ class LeverCollector:
         resp = httpx.get(
             f"https://api.lever.co/v0/postings/{site}?mode=json",
             timeout=20.0,
-            headers={"User-Agent": "Mozilla/5.0 (JobFly/0.1)"},
+            headers={"User-Agent": "Mozilla/5.0 (JobsComing/0.1)"},
         )
         resp.raise_for_status()
         data = resp.json()

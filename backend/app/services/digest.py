@@ -92,7 +92,7 @@ def build_daily_digest(db: Session, user_id: str) -> str | None:
         parts.append(f"[去處理]({settings.frontend_url}/accounts)")
     if not parts:
         return None
-    header = "☀️ JobFly 每日求職報告"
+    header = "☀️ JobsComing 每日求職報告"
     return header + "\n\n" + "\n\n".join(parts)
 
 
@@ -103,7 +103,7 @@ def deliver_daily_digest(db: Session, user_id: str) -> dict:
     return {
         "sent": True,
         "results": notify_with_fallback(
-            db, user_id, "daily_digest", "JobFly 每日求職報告", content,
+            db, user_id, "daily_digest", "JobsComing 每日求職報告", content,
             meta={"source": "daily_digest"},
         ),
     }

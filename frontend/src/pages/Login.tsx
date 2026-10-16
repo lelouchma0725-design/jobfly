@@ -52,7 +52,7 @@ export default function Login({ onLogin }: { onLogin: (s: AuthSession) => void }
   return (
     <div className="center column" style={{ minHeight: "100vh" }}>
       <div className="card">
-        <h1>JobFly 求職投遞助手</h1>
+        <h1>JobsComing 求職投遞助手</h1>
         <p className="muted">郵箱登錄（公共用戶可自助註冊）</p>
         <input
           type="email"
