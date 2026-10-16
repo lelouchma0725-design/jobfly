@@ -33,7 +33,9 @@ export function token(): string | null {
 }
 
 async function post<T = unknown>(path: string, body: unknown): Promise<T> {
-  const base = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "";
+  const base =
+    (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
+    (import.meta.env.PROD ? "https://jobscoming-backend.onrender.com" : "");
   const res = await fetch(base + path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
