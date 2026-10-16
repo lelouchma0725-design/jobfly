@@ -105,20 +105,22 @@ export default function Matches() {
                 </option>
               ))}
             </select>
-            <select
+            <input
+              list="company-options"
+              placeholder="公司篩選（可輸入，如：中信）"
               value={company}
               onChange={(e) => {
                 setCompany(e.target.value);
                 setOffset(0);
               }}
-            >
-              <option value="">全部公司</option>
+            />
+            <datalist id="company-options">
               {companies.map((c) => (
                 <option key={c.company_name} value={c.company_name}>
                   {c.company_name}（{c.count}）
                 </option>
               ))}
-            </select>
+            </datalist>
             <button className="ghost" onClick={() => { void load(); setMsg("已刷新"); }}>
               🔃 刷新
             </button>
