@@ -64,14 +64,14 @@ def main() -> None:
 
     # 後端（先刪除同名舊服務，確保服務配置以本次為準）
     existing = [s.get("service", s) for s in api.get("/services").json()
-                if s.get("service", s).get("name") == "jobfly-backend"]
+                if s.get("service", s).get("name") == "jobscoming-backend"]
     for svc in existing:
         print("刪除舊後端服務:", svc["id"], api.delete(f"/services/{svc['id']}").status_code)
     r = api.post(
         "/services",
         json={
             "type": "web_service",
-            "name": "jobfly-backend",
+            "name": "jobscoming-backend",
             "ownerId": owner_id,
             "repo": REPO,
             "branch": BRANCH,
@@ -97,14 +97,14 @@ def main() -> None:
 
     # 前端（同樣先刪舊）
     existing_f = [s.get("service", s) for s in api.get("/services").json()
-                  if s.get("service", s).get("name") == "jobfly-frontend"]
+                  if s.get("service", s).get("name") == "jobscoming-frontend"]
     for svc in existing_f:
         print("刪除舊前端服務:", svc["id"], api.delete(f"/services/{svc['id']}").status_code)
     r = api.post(
         "/services",
         json={
             "type": "static_site",
-            "name": "jobfly-frontend",
+            "name": "jobscoming-frontend",
             "ownerId": owner_id,
             "repo": REPO,
             "branch": BRANCH,
