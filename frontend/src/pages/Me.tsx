@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useT } from "../lib/i18n";
 import Profile from "./Profile";
+import ProfileInfo from "./ProfileInfo";
 import Documents from "./Documents";
 import Accounts from "./Accounts";
 import Companies from "./Companies";
@@ -12,6 +13,7 @@ import Applications from "./Applications";
 import Tasks from "./Tasks";
 
 const TABS = [
+  ["info", "personalInfo", ProfileInfo],
   ["profile", "aiPortrait", Profile],
   ["documents", "myFiles", Documents],
   ["accounts", "accounts", Accounts],

@@ -28,6 +28,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   quickMatches: { zh: "看看我最匹配的崗位", en: "Show my best matches" },
   quickApps: { zh: "我的投遞進度如何？", en: "How are my applications going?" },
   aiPortrait: { zh: "AI 畫像", en: "AI Portrait" },
+  personalInfo: { zh: "個人信息", en: "Personal Info" },
   myFiles: { zh: "我的文件", en: "My Files" },
   accounts: { zh: "平台帳號", en: "Platform Accounts" },
   companies: { zh: "關注公司", en: "Watched Companies" },

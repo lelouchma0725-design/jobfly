@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -134,8 +134,10 @@ def list_documents(
 
 
 @router.post("/{doc_id}/parse", status_code=202)
-def trigger_parse(user: CurrentUser, db: DB, doc_id: str) -> dict:
-    """觸發文檔解析（文本抽取 + LLM 結構化），同步執行。"""
+def trigger_parse(
+    user: CurrentUser, db: DB, doc_id: str, background_tasks: BackgroundTasks
+) -> dict:
+    """觸發文檔解析（文本抽取 + LLM 結構化），同步執行；解析成功後後台重新匹配。"""
     row = db.execute(
         text(
             "SELECT storage_path, mime FROM user_documents "
@@ -149,7 +151,11 @@ def trigger_parse(user: CurrentUser, db: DB, doc_id: str) -> dict:
         parse_document(db, doc_id, user["id"], row["storage_path"], row["mime"])
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(500, f"解析失敗: {exc}") from exc
-    return {"ok": True}
+    # 簡歷內容變化 → 後台重新匹配（畫像更新後會再觸發一次完整重匹配）
+    from app.api.profile import _rematch_bg
+
+    background_tasks.add_task(_rematch_bg, user["id"])
+    return {"ok": True, "note": "解析完成，正在後台重新匹配崗位"}
 
 
 @router.get("/{doc_id}")

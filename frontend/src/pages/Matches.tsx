@@ -32,6 +32,8 @@ export default function Matches() {
   const [items, setItems] = useState<Match[]>([]);
   const [total, setTotal] = useState(0);
   const [status, setStatus] = useState("");
+  const [company, setCompany] = useState("");
+  const [companies, setCompanies] = useState<{ company_name: string; count: number; top_score: number | null }[]>([]);
   const [msg, setMsg] = useState("");
   const [limit, setLimit] = useState(20);
   const [offset, setOffset] = useState(0);
@@ -39,6 +41,7 @@ export default function Matches() {
   async function load() {
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     if (status) params.set("status", status);
+    if (company) params.set("company", company);
     try {
       const r = await api<{ items: Match[]; total: number }>(`/api/matches?${params}`);
       setItems(r.items);
@@ -50,14 +53,29 @@ export default function Matches() {
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, limit, offset]);
+  }, [status, company, limit, offset]);
+  useEffect(() => {
+    api<{ company_name: string; count: number; top_score: number | null }[]>("/api/matches/companies")
+      .then(setCompanies)
+      .catch(() => {});
+  }, []);
+
+  async function rematch() {
+    setMsg("正在後台重新匹配（用當前畫像重算所有貼合度）…");
+    try {
+      await api("/api/matches/rematch", { method: "POST" });
+      setMsg("已開始重新匹配，稍後刷新查看最新分數");
+    } catch (e) {
+      setMsg(`重新匹配失敗: ${(e as Error).message}`);
+    }
+  }
 
   return (
     <div>
       <main>
         <div className="card wide">
           <h2>{t("myMatches")}</h2>
-          <div className="row">
+          <div className="row wrap">
             <select
               value={status}
               onChange={(e) => {
@@ -72,7 +90,25 @@ export default function Matches() {
                 </option>
               ))}
             </select>
+            <select
+              value={company}
+              onChange={(e) => {
+                setCompany(e.target.value);
+                setOffset(0);
+              }}
+            >
+              <option value="">全部公司</option>
+              {companies.map((c) => (
+                <option key={c.company_name} value={c.company_name}>
+                  {c.company_name}（{c.count}）
+                </option>
+              ))}
+            </select>
+            <button className="ghost" onClick={() => void rematch()}>
+              🔄 重新匹配
+            </button>
           </div>
+          <p className="muted">重新匹配會用你當前畫像重算所有崗位貼合度（後台執行，稍後刷新）。</p>
           <table>
             <thead>
               <tr>
