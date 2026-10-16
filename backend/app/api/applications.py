@@ -22,7 +22,11 @@ DB = Annotated[Session, Depends(get_db)]
 
 
 @router.get("")
-def list_applications(user: CurrentUser, db: DB, status: str | None = None) -> list[dict]:
+def list_applications(
+    user: CurrentUser, db: DB, status: str | None = None,
+    limit: int = 20, offset: int = 0,
+) -> dict:
+    limit = min(max(limit, 1), 100)
     rows = db.execute(
         text(
             """
@@ -35,31 +39,46 @@ def list_applications(user: CurrentUser, db: DB, status: str | None = None) -> l
             LEFT JOIN job_matches m ON m.id = a.match_id
             LEFT JOIN resume_versions rv ON rv.id = a.resume_version_id
             WHERE a.user_id = :uid AND (CAST(:st AS text) IS NULL OR CAST(a.status AS text) = :st)
-            ORDER BY a.created_at DESC LIMIT 200
+            ORDER BY a.created_at DESC
+            LIMIT :lim OFFSET :off
+            """
+        ),
+        {"uid": user["id"], "st": status, "lim": limit, "off": offset},
+    ).mappings().all()
+    total = db.execute(
+        text(
+            """
+            SELECT COUNT(*) AS n FROM applications a
+            WHERE a.user_id = :uid AND (CAST(:st AS text) IS NULL OR CAST(a.status AS text) = :st)
             """
         ),
         {"uid": user["id"], "st": status},
-    ).mappings().all()
-    return [
-        {
-            "id": str(r["id"]),
-            "status": r["status"],
-            "status_reason": r["status_reason"],
-            "attempts_count": r["attempts_count"],
-            "next_retry_at": r["next_retry_at"].isoformat() if r["next_retry_at"] else None,
-            "submitted_at": r["submitted_at"].isoformat() if r["submitted_at"] else None,
-            "external_ref": r["external_ref"],
-            "created_at": r["created_at"].isoformat(),
-            "company_name": r["company_name"],
-            "title": r["title"],
-            "location": r["location"],
-            "apply_url": r["apply_url"],
-            "source": r["source"],
-            "match_score": r["match_score"],
-            "resume_version_id": str(r["resume_version_id"]) if r["resume_version_id"] else None,
-        }
-        for r in rows
-    ]
+    ).mappings().one()["n"]
+    return {
+        "items": [
+            {
+                "id": str(r["id"]),
+                "status": r["status"],
+                "status_reason": r["status_reason"],
+                "attempts_count": r["attempts_count"],
+                "next_retry_at": r["next_retry_at"].isoformat() if r["next_retry_at"] else None,
+                "submitted_at": r["submitted_at"].isoformat() if r["submitted_at"] else None,
+                "external_ref": r["external_ref"],
+                "created_at": r["created_at"].isoformat(),
+                "company_name": r["company_name"],
+                "title": r["title"],
+                "location": r["location"],
+                "apply_url": r["apply_url"],
+                "source": r["source"],
+                "match_score": r["match_score"],
+                "resume_version_id": str(r["resume_version_id"]) if r["resume_version_id"] else None,
+            }
+            for r in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.post("/run", status_code=202)

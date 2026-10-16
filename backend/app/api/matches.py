@@ -26,7 +26,11 @@ def score(user: CurrentUser, db: DB, posting_id: str) -> dict:
 
 
 @router.get("")
-def list_matches(user: CurrentUser, db: DB, status: str | None = None) -> list[dict]:
+def list_matches(
+    user: CurrentUser, db: DB, status: str | None = None,
+    limit: int = 20, offset: int = 0,
+) -> dict:
+    limit = min(max(limit, 1), 100)
     rows = db.execute(
         text(
             """
@@ -36,24 +40,38 @@ def list_matches(user: CurrentUser, db: DB, status: str | None = None) -> list[d
             JOIN job_postings p ON p.id = m.posting_id
             WHERE m.user_id = :uid AND (CAST(:st AS text) IS NULL OR CAST(m.status AS text) = :st)
             ORDER BY m.match_score DESC NULLS LAST, p.first_seen_at DESC
-            LIMIT 200
+            LIMIT :lim OFFSET :off
+            """
+        ),
+        {"uid": user["id"], "st": status, "lim": limit, "off": offset},
+    ).mappings().all()
+    total = db.execute(
+        text(
+            """
+            SELECT COUNT(*) AS n FROM job_matches m
+            WHERE m.user_id = :uid AND (CAST(:st AS text) IS NULL OR CAST(m.status AS text) = :st)
             """
         ),
         {"uid": user["id"], "st": status},
-    ).mappings().all()
-    return [
-        {
-            "id": str(r["id"]),
-            "posting_id": str(r["posting_id"]),
-            "match_score": r["match_score"],
-            "hard_failures": r["hard_failures"] or [],
-            "reasons": r["reasons"] or [],
-            "status": r["status"],
-            "company_name": r["company_name"],
-            "title": r["title"],
-            "location": r["location"],
-            "apply_url": r["apply_url"],
-            "first_seen_at": r["first_seen_at"].isoformat(),
-        }
-        for r in rows
-    ]
+    ).mappings().one()["n"]
+    return {
+        "items": [
+            {
+                "id": str(r["id"]),
+                "posting_id": str(r["posting_id"]),
+                "match_score": r["match_score"],
+                "hard_failures": r["hard_failures"] or [],
+                "reasons": r["reasons"] or [],
+                "status": r["status"],
+                "company_name": r["company_name"],
+                "title": r["title"],
+                "location": r["location"],
+                "apply_url": r["apply_url"],
+                "first_seen_at": r["first_seen_at"].isoformat(),
+            }
+            for r in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }

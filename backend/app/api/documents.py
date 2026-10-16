@@ -40,9 +40,12 @@ async def upload_document(
     request: Request,
     doc_type: str,
     file: UploadFile = File(...),
+    lang: str = "zh",
 ) -> dict:
     if doc_type not in DOC_TYPES:
         raise HTTPException(422, f"doc_type 必須是 {DOC_TYPES} 之一")
+    if lang not in ("zh", "en"):
+        raise HTTPException(422, "lang 必須是 zh 或 en")
     if file.content_type not in ALLOWED_MIME:
         raise HTTPException(422, f"不支持的文件類型: {file.content_type}")
     data = await file.read()
@@ -58,8 +61,8 @@ async def upload_document(
         text(
             """
             INSERT INTO user_documents
-              (user_id, doc_type, file_name, storage_path, mime, size_bytes, parse_status)
-            VALUES (:uid, :doc_type, :name, :path, :mime, :size, 'pending')
+              (user_id, doc_type, file_name, storage_path, mime, size_bytes, parse_status, lang)
+            VALUES (:uid, :doc_type, :name, :path, :mime, :size, 'pending', :lang)
             RETURNING id
             """
         ),
@@ -70,42 +73,64 @@ async def upload_document(
             "path": storage_path,
             "mime": file.content_type,
             "size": len(data),
+            "lang": lang,
         },
     ).mappings().one()
     db.commit()
     log_audit(db, user["id"], "document.upload", "user_documents", str(row["id"]),
-              {"doc_type": doc_type, "size": len(data)},
+              {"doc_type": doc_type, "size": len(data), "lang": lang},
               request.client.host if request.client else None)
     return {"id": str(row["id"])}
 
 
 @router.get("")
-def list_documents(user: CurrentUser, db: DB, doc_type: str | None = None) -> list[dict]:
+def list_documents(
+    user: CurrentUser, db: DB, doc_type: str | None = None,
+    limit: int = 20, offset: int = 0,
+) -> dict:
+    limit = min(max(limit, 1), 100)
     rows = db.execute(
         text(
             """
-            SELECT id, doc_type, file_name, mime, size_bytes, parse_status, created_at, is_active
+            SELECT id, doc_type, file_name, mime, size_bytes, parse_status, created_at, is_active, lang
             FROM user_documents
             WHERE user_id = :uid AND deleted_at IS NULL
               AND (CAST(:t AS text) IS NULL OR CAST(doc_type AS text) = :t)
             ORDER BY created_at DESC
+            LIMIT :lim OFFSET :off
+            """
+        ),
+        {"uid": user["id"], "t": doc_type, "lim": limit, "off": offset},
+    ).mappings().all()
+    total = db.execute(
+        text(
+            """
+            SELECT COUNT(*) AS n FROM user_documents
+            WHERE user_id = :uid AND deleted_at IS NULL
+              AND (CAST(:t AS text) IS NULL OR CAST(doc_type AS text) = :t)
             """
         ),
         {"uid": user["id"], "t": doc_type},
-    ).mappings().all()
-    return [
-        {
-            "id": str(r["id"]),
-            "doc_type": r["doc_type"],
-            "file_name": r["file_name"],
-            "mime": r["mime"],
-            "size_bytes": r["size_bytes"],
-            "parse_status": r["parse_status"],
-            "is_active": r["is_active"],
-            "created_at": r["created_at"].isoformat(),
-        }
-        for r in rows
-    ]
+    ).mappings().one()["n"]
+    return {
+        "items": [
+            {
+                "id": str(r["id"]),
+                "doc_type": r["doc_type"],
+                "file_name": r["file_name"],
+                "mime": r["mime"],
+                "size_bytes": r["size_bytes"],
+                "parse_status": r["parse_status"],
+                "is_active": r["is_active"],
+                "lang": r["lang"],
+                "created_at": r["created_at"].isoformat(),
+            }
+            for r in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.post("/{doc_id}/parse", status_code=202)

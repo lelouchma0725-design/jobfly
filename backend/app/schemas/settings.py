@@ -21,6 +21,8 @@ class SettingsUpdate(BaseModel):
     timezone: str | None = None
     daily_digest_enabled: bool | None = None
     login_expiry_notify: bool | None = None
+    preferred_locations: list[str] | None = None
+    location_weight: int | None = Field(default=None, ge=0, le=25)
 
     @field_validator("timezone")
     @classmethod

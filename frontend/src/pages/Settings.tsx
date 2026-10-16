@@ -11,6 +11,8 @@ type Settings = {
   timezone: string;
   daily_digest_enabled: boolean;
   login_expiry_notify: boolean;
+  preferred_locations: string[] | null;
+  location_weight: number;
 };
 
 const DEFAULTS: Settings = {
@@ -23,6 +25,8 @@ const DEFAULTS: Settings = {
   timezone: "Asia/Shanghai",
   daily_digest_enabled: true,
   login_expiry_notify: true,
+  preferred_locations: [],
+  location_weight: 10,
 };
 
 type PushChannels = Record<string, string>;
@@ -71,7 +75,7 @@ export default function Settings() {
         <div className="card">
           <h2>投遞與推送設置</h2>
 
-          <h3>AI 內容微調（FR-1c）</h3>
+          <h3>AI 內容微調</h3>
           <label className="row">
             <input
               type="checkbox"
@@ -89,7 +93,7 @@ export default function Settings() {
             投遞時允許按崗位要求生成/微調 Cover Letter
           </label>
 
-          <h3>貼合度閾值（FR-1f）</h3>
+          <h3>貼合度閾值</h3>
           <label className="row">
             <input
               type="range"
@@ -102,7 +106,35 @@ export default function Settings() {
             <b>{s.match_threshold}%</b> — 貼合度高於此值才推送/投遞
           </label>
 
-          <h3>自動投遞模式（FR-1g）</h3>
+          <h3>期望地區加權</h3>
+          <p className="muted">命中期望城市的崗位加分，其他地區適度降分（影響貼合度排序與投遞）。</p>
+          <label className="row">
+            <input
+              placeholder="期望城市，逗號分隔（如：上海,香港）"
+              defaultValue={(s.preferred_locations ?? []).join(",")}
+              onBlur={(e) =>
+                save({
+                  preferred_locations: e.target.value
+                    .split(/[,，]/)
+                    .map((x) => x.trim())
+                    .filter(Boolean),
+                })
+              }
+            />
+          </label>
+          <label className="row">
+            <input
+              type="range"
+              min={0}
+              max={25}
+              step={5}
+              value={s.location_weight}
+              onChange={(e) => save({ location_weight: Number(e.target.value) })}
+            />
+            <b>+{s.location_weight}</b> 分 — 地區權重（非期望城市 -{Math.min(s.location_weight, 10)} 分）
+          </label>
+
+          <h3>自動投遞模式</h3>
           {(
             [
               ["off", "關閉自動投遞：僅按閾值推送崗位"],
@@ -121,7 +153,7 @@ export default function Settings() {
             </label>
           ))}
 
-          <h3>每日推送（FR-1h）</h3>
+          <h3>每日推送</h3>
           <label className="row">
             推送時間
             <input

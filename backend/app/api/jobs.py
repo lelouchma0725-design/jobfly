@@ -42,6 +42,17 @@ def list_jobs(
         ),
         {"uid": user["id"], "q": q, "co": company, "lim": limit, "off": offset},
     ).mappings().all()
+    total = db.execute(
+        text(
+            """
+            SELECT COUNT(*) AS n FROM job_postings p
+            WHERE p.is_active = true
+              AND (CAST(:q AS text) IS NULL OR p.title ILIKE '%'||:q||'%' OR p.description_text ILIKE '%'||:q||'%')
+              AND (CAST(:co AS text) IS NULL OR p.company_name ILIKE '%'||:co||'%')
+            """
+        ),
+        {"q": q, "co": company},
+    ).mappings().one()["n"]
     return {
         "items": [
             {
@@ -62,6 +73,7 @@ def list_jobs(
         ],
         "limit": limit,
         "offset": offset,
+        "total": total,
     }
 
 

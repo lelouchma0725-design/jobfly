@@ -45,10 +45,9 @@ def _load_state(ctx: ApplyContext) -> dict | None:
     try:
         row = db.execute(
             text(
-                "SELECT cookie_state_enc FROM platform_accounts "
-                "WHERE user_id=:u AND platform='gtht' ORDER BY created_at LIMIT 1"
+                "SELECT cookie_state_enc FROM platform_accounts WHERE id=:aid"
             ),
-            {"u": ctx.user_id},
+            {"aid": ctx.account.get("id")},
         ).first()
         if not row or not row[0]:
             return None
@@ -73,10 +72,10 @@ def _save_state(ctx: ApplyContext, token: str) -> None:
         db.execute(
             text(
                 "UPDATE platform_accounts SET cookie_state_enc=:s, status='active', "
-                "last_login_at=now(), updated_at=now() "
-                "WHERE user_id=:u AND platform='gtht'"
+                "last_login_at=now(), updated_at=now() WHERE id=:aid"
             ),
-            {"s": encrypt_json(get_dek_for_user(db, ctx.user_id), state), "u": ctx.user_id},
+            {"s": encrypt_json(get_dek_for_user(db, ctx.user_id), state),
+             "aid": ctx.account.get("id")},
         )
         db.commit()
     finally:
@@ -227,9 +226,9 @@ def _clear_state(ctx: ApplyContext) -> None:
         db.execute(
             text(
                 "UPDATE platform_accounts SET cookie_state_enc=NULL, status='expired', "
-                "updated_at=now() WHERE user_id=:u AND platform='gtht'"
+                "updated_at=now() WHERE id=:aid"
             ),
-            {"u": ctx.user_id},
+            {"aid": ctx.account.get("id")},
         )
         db.commit()
     finally:

@@ -114,7 +114,7 @@ def get_current_user(
             ON CONFLICT (id) DO UPDATE
               SET email = COALESCE(profiles.email, EXCLUDED.email),
                   phone = COALESCE(profiles.phone, EXCLUDED.phone)
-            RETURNING id::text, email, phone, role
+            RETURNING id::text, email, phone, role, full_name
             """
         ),
         {"id": user_id, "email": email, "phone": None},

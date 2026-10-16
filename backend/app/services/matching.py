@@ -112,6 +112,13 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
     )
     scored = chat_json(_SCORE_SYSTEM, prompt)
 
+    # 地區權重調整（期望城市加權，非期望城市適度降權）
+    adjustment = _location_adjust(db, user_id, posting["location"])
+    final_score = int(scored["match_score"]) + adjustment
+    final_score = min(max(final_score, 50), 100)
+    breakdown = scored.get("breakdown") or {}
+    breakdown["location_adjust"] = adjustment
+
     db.execute(
         text(
             """
@@ -129,10 +136,27 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
             "uid": user_id,
             "pid": posting_id,
             "pv": profile["id"],
-            "score": int(scored["match_score"]),
-            "bd": j(scored.get("breakdown") or {}),
+            "score": final_score,
+            "bd": j(breakdown),
             "reasons": j(scored.get("reasons") or []),
         },
     )
     db.commit()
-    return {"match_score": scored["match_score"], "hard_failures": [], "status": "new"}
+    return {"match_score": final_score, "hard_failures": [], "status": "new",
+            "location_adjust": adjustment}
+
+
+def _location_adjust(db: Session, user_id: str, posting_location: str | None) -> int:
+    """期望城市命中 +location_weight；未命中且配置了期望城市 → -min(weight,10)。"""
+    st = db.execute(
+        text("SELECT preferred_locations, location_weight FROM user_settings WHERE user_id=:u"),
+        {"u": user_id},
+    ).mappings().first()
+    preferred = (st["preferred_locations"] if st else None) or []
+    weight = (st["location_weight"] if st else None) or 10
+    if not preferred:
+        return 0
+    loc = (posting_location or "").lower()
+    if any(p.lower() in loc for p in preferred):
+        return weight
+    return -min(weight, 10)
