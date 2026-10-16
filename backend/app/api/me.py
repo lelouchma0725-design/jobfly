@@ -31,6 +31,7 @@ class PushChannelUpdate(BaseModel):
 
 class ProfileUpdate(BaseModel):
     full_name: str | None = None
+    phone: str | None = None
 
 
 @router.get("/me")
@@ -40,16 +41,61 @@ def read_me(user: CurrentUser) -> dict:
 
 @router.patch("/me")
 def update_me(user: CurrentUser, db: DB, payload: ProfileUpdate) -> dict:
-    """更新個人資料（暱稱/姓名）。"""
+    """更新個人資料（暱稱/電話）。"""
     if payload.full_name is not None:
-        name = payload.full_name.strip()[:64]
         db.execute(
             text("UPDATE profiles SET full_name=:n, updated_at=now() WHERE id=:id"),
-            {"n": name, "id": user["id"]},
+            {"n": payload.full_name.strip()[:64], "id": user["id"]},
         )
-        db.commit()
-        user["full_name"] = name
+        user["full_name"] = payload.full_name.strip()[:64]
+    if payload.phone is not None:
+        db.execute(
+            text("UPDATE profiles SET phone=:p, updated_at=now() WHERE id=:id"),
+            {"p": payload.phone.strip()[:32], "id": user["id"]},
+        )
+        user["phone"] = payload.phone.strip()[:32]
+    db.commit()
     return user
+
+
+@router.get("/me/profile-full")
+def profile_full(user: CurrentUser, db: DB) -> dict:
+    """個人信息總覽：基本信息 + 畫像硬性事實/教育/經歷/技能 + 元信息表，供用戶檢查編輯。"""
+    cp = db.execute(
+        text(
+            "SELECT hard_facts, education, experiences, skills, summary, generated_at "
+            "FROM candidate_profiles WHERE user_id=:uid AND is_current=true "
+            "ORDER BY generated_at DESC LIMIT 1"
+        ),
+        {"uid": user["id"]},
+    ).mappings().first()
+    fields = db.execute(
+        text(
+            "SELECT key, value, source, updated_at FROM user_info_fields "
+            "WHERE user_id=:uid ORDER BY updated_at DESC LIMIT 200"
+        ),
+        {"uid": user["id"]},
+    ).mappings().all()
+    return {
+        "basic": {
+            "full_name": user.get("full_name"),
+            "email": user.get("email"),
+            "phone": user.get("phone"),
+        },
+        "profile": {
+            "hard_facts": (cp["hard_facts"] if cp else None) or {},
+            "education": (cp["education"] if cp else None) or [],
+            "experiences": (cp["experiences"] if cp else None) or [],
+            "skills": (cp["skills"] if cp else None) or [],
+            "summary": (cp["summary"] if cp else None),
+            "generated_at": cp["generated_at"].isoformat() if cp and cp["generated_at"] else None,
+        },
+        "info_fields": [
+            {"key": r["key"], "value": r["value"], "source": r["source"],
+             "updated_at": r["updated_at"].isoformat()}
+            for r in fields
+        ],
+    }
 
 
 @router.get("/me/settings")
