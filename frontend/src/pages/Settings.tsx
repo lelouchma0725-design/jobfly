@@ -13,6 +13,7 @@ type Settings = {
   login_expiry_notify: boolean;
   preferred_locations: string[] | null;
   location_weight: number;
+  campus_preference: "campus" | "society" | "both";
 };
 
 const DEFAULTS: Settings = {
@@ -27,6 +28,7 @@ const DEFAULTS: Settings = {
   login_expiry_notify: true,
   preferred_locations: [],
   location_weight: 10,
+  campus_preference: "both",
 };
 
 type PushChannels = Record<string, string>;
@@ -133,6 +135,26 @@ export default function Settings() {
             />
             <b>+{s.location_weight}</b> 分 — 地區權重（非期望城市 -{Math.min(s.location_weight, 10)} 分）
           </label>
+
+          <h3>校招/社招偏好</h3>
+          <p className="muted">決定哪些崗位進入投遞隊列（校招與社招貼合度分開計算：校招對有工作經歷者降權 15 分）。</p>
+          {(
+            [
+              ["campus", "只投校招（應屆/管培生）"],
+              ["society", "只投社招"],
+              ["both", "校招和社招都投（推薦：兩者都參與匹配排序）"],
+            ] as const
+          ).map(([value, desc]) => (
+            <label className="row" key={value}>
+              <input
+                type="radio"
+                name="campus_preference"
+                checked={s.campus_preference === value}
+                onChange={() => save({ campus_preference: value })}
+              />
+              {desc}
+            </label>
+          ))}
 
           <h3>自動投遞模式</h3>
           {(

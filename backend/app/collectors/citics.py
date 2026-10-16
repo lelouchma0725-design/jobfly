@@ -90,6 +90,6 @@ class CiticsCollector:
                             f"申請截止：{j.get('reqendDate')}（{tab_name}）"
                         ),
                         posted_at=None,
-                        raw={"recruit_type": recruit_type, "tab": tab_name, **j},
+                        raw={"recruit_type": recruit_type, "tab": tab_name, "is_campus": True, **j},
                     ))
         return postings

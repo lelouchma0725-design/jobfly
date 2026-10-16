@@ -100,13 +100,13 @@ class GthtCollector:
                     postings.append(JobPosting(
                         source="gtht",
                         external_id=j["job_id"],
+                        raw={"education": j["education"], "tab": tab_name, "is_campus": tab_name == "校園招聘"},
                         company_name=COMPANY_NAME,
                         title=j["title"],
                         apply_url=f"{BASE}/recruitment/main/{tab}",
                         location=j["location"] or None,
                         description_text=j["description"],
                         posted_at=None,
-                        raw={"education": j["education"], "tab": tab_name},
                     ))
                 if len(jobs) < PAGE_SIZE:
                     break

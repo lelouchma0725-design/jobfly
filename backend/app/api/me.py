@@ -29,6 +29,47 @@ class PushChannelUpdate(BaseModel):
     value: str | None = None
 
 
+class HardFactUpdate(BaseModel):
+    key: str
+    value: str | None = None
+
+
+HARD_FACT_KEYS = {
+    "visa_status", "preferred_locations", "salary_expectation", "availability", "total_years",
+}
+
+
+@router.put("/me/hard-facts")
+def update_hard_fact(user: CurrentUser, db: DB, payload: HardFactUpdate) -> dict:
+    """更新硬性事實：同步寫入畫像 hard_facts 與元信息表（兩處保持一致）。"""
+    if payload.key not in HARD_FACT_KEYS:
+        raise HTTPException(422, f"key 必須是 {sorted(HARD_FACT_KEYS)} 之一")
+    key, value = payload.key, (payload.value or "").strip()
+    # 1) 畫像 hard_facts
+    db.execute(
+        text(
+            "UPDATE candidate_profiles SET hard_facts = "
+            "jsonb_set(COALESCE(hard_facts, '{}'::jsonb), :k, to_jsonb(:v::text)) "
+            "WHERE user_id=:uid AND is_current=true"
+        ),
+        {"k": "{" + key + "}", "v": value, "uid": user["id"]},
+    )
+    # 2) 元信息表同步
+    db.execute(
+        text(
+            """
+            INSERT INTO user_info_fields (user_id, key, value, source)
+            VALUES (:uid, :k, :v, 'user')
+            ON CONFLICT (user_id, key) DO UPDATE
+              SET value=EXCLUDED.value, source='user', updated_at=now()
+            """
+        ),
+        {"uid": user["id"], "k": key, "v": value},
+    )
+    db.commit()
+    return {"ok": True}
+
+
 class ProfileUpdate(BaseModel):
     full_name: str | None = None
     phone: str | None = None

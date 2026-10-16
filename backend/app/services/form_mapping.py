@@ -57,6 +57,21 @@ def build_candidate_payload(db: Session, user_id: str) -> dict:
     }
     if cp and cp["hard_facts"]:
         payload.update(cp["hard_facts"])
+
+    # 元信息表覆蓋/互補：用戶手動維護的硬性信息優先於簡歷解析
+    # （key 統一：visa_status / preferred_locations / salary_expectation /
+    #   availability / total_years / full_name / email / phone）
+    info = db.execute(
+        text("SELECT key, value FROM user_info_fields WHERE user_id=:uid"),
+        {"uid": user_id},
+    ).mappings().all()
+    hard_keys = {
+        "visa_status", "preferred_locations", "salary_expectation", "availability",
+        "total_years", "full_name", "email", "phone",
+    }
+    for r in info:
+        if r["key"] in hard_keys and r["value"]:
+            payload[r["key"]] = r["value"]
     return payload
 
 

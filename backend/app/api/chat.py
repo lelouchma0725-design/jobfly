@@ -137,16 +137,17 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
     def apply_rules(_: dict) -> dict:
         st = db.execute(text(
             "SELECT match_threshold, auto_apply_mode, preferred_locations, location_weight, "
-            "apply_rate_limit_min FROM user_settings WHERE user_id=:u"
+            "apply_rate_limit_min, campus_preference FROM user_settings WHERE user_id=:u"
         ), {"u": user_id}).mappings().first()
         return {
             "投遞規則": [
                 "① 公司級一崗一投：同一公司已有進行中/成功的投遞時，自動跳過該公司其餘崗位",
-                "② 校招/應屆崗位：工作年限 ≥3 年會被硬性過濾（校招僅限應屆生）",
-                f"③ 貼合度閾值：{st['match_threshold'] if st else 70}%",
-                f"④ 投遞模式：{st['auto_apply_mode'] if st else 'threshold'}",
-                f"⑤ 期望地區加權：{st['preferred_locations'] or '未設置'}，命中 +{st['location_weight'] if st else 10} 分",
-                f"⑥ 速率限制：{st['apply_rate_limit_min'] if st else 5} 分鐘/次",
+                f"② 校招/社招偏好：{st['campus_preference'] if st else 'both'}（campus=只投校招 / society=只投社招 / both=都投）",
+                "③ 校招職級適配：有工作經歷者投校招不攔截但降權 15 分（職級不適配）",
+                f"④ 貼合度閾值：{st['match_threshold'] if st else 70}%",
+                f"⑤ 投遞模式：{st['auto_apply_mode'] if st else 'threshold'}",
+                f"⑥ 期望地區加權：{st['preferred_locations'] or '未設置'}，命中 +{st['location_weight'] if st else 10} 分",
+                f"⑦ 速率限制：{st['apply_rate_limit_min'] if st else 5} 分鐘/次",
             ],
         }
 
@@ -170,6 +171,8 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
             fields["match_threshold"] = min(max(int(args["match_threshold"]), 50), 100)
         if "auto_apply_mode" in args and args["auto_apply_mode"] in ("off", "threshold", "all"):
             fields["auto_apply_mode"] = args["auto_apply_mode"]
+        if "campus_preference" in args and args["campus_preference"] in ("campus", "society", "both"):
+            fields["campus_preference"] = args["campus_preference"]
         if not fields:
             return {"完成": False, "原因": "沒有可更新的設置"}
         sets = ", ".join(f"{k}=:{k}" for k in fields)
@@ -181,6 +184,111 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
         ), {"u": user_id, **fields})
         db.commit()
         return {"完成": True, "已更新": fields}
+
+    def find_job(args: dict) -> dict:
+        """精確搜索崗位庫（公司/標題關鍵詞），含最新評分。"""
+        q = str(args.get("keyword") or "").strip()
+        company = str(args.get("company") or "").strip()
+        if not q and not company:
+            return {"error": "請提供 keyword 或 company"}
+        rows = db.execute(text(
+            """
+            SELECT p.company_name, p.title, p.location, p.is_campus,
+                   m.match_score, m.status
+            FROM job_postings p
+            LEFT JOIN job_matches m ON m.posting_id = p.id AND m.user_id = :u
+            WHERE p.is_active = true
+              AND (CAST(:q AS text) = '' OR p.title ILIKE '%'||:q||'%' OR p.description_text ILIKE '%'||:q||'%')
+              AND (CAST(:co AS text) = '' OR p.company_name ILIKE '%'||:co||'%')
+            ORDER BY m.match_score DESC NULLS LAST, p.first_seen_at DESC
+            LIMIT 10
+            """
+        ), {"u": user_id, "q": q, "co": company}).mappings().all()
+        if not rows:
+            return {"找到": 0, "提示": "崗位庫中沒有匹配的崗位；可先調用 run_collect 採集最新崗位後再查"}
+        return {"找到": len(rows), "崗位": [
+            {"公司": r["company_name"], "職位": r["title"], "地點": r["location"],
+             "校招": r["is_campus"], "貼合度": r["match_score"], "狀態": r["status"]}
+            for r in rows
+        ]}
+
+    def score_job(args: dict) -> dict:
+        """對指定崗位即時評分（忽略緩存，用當前畫像現場重算）。"""
+        q = str(args.get("keyword") or "").strip()
+        company = str(args.get("company") or "").strip()
+        row = db.execute(text(
+            """
+            SELECT p.id, p.company_name, p.title FROM job_postings p
+            WHERE p.is_active = true
+              AND (CAST(:q AS text) = '' OR p.title ILIKE '%'||:q||'%')
+              AND (CAST(:co AS text) = '' OR p.company_name ILIKE '%'||:co||'%')
+            ORDER BY p.first_seen_at DESC LIMIT 1
+            """
+        ), {"q": q, "co": company}).mappings().first()
+        if not row:
+            return {"error": "未找到該崗位，可先 run_collect 採集"}
+        from app.services.matching import score_posting
+
+        result = score_posting(db, user_id, str(row["id"]))
+        return {
+            "崗位": f"{row['company_name']} · {row['title']}",
+            "最新貼合度": result.get("match_score"),
+            "硬性條件": result.get("hard_failures"),
+            "地點調整": result.get("location_adjust"),
+        }
+
+    def update_basic_info(args: dict) -> dict:
+        """更新基本信息（姓名/電話），寫 profiles。"""
+        sets, params = [], {"u": user_id}
+        if "full_name" in args and args["full_name"]:
+            sets.append("full_name = :n")
+            params["n"] = str(args["full_name"]).strip()[:64]
+        if "phone" in args and args["phone"]:
+            sets.append("phone = :p")
+            params["p"] = str(args["phone"]).strip()[:32]
+        if not sets:
+            return {"完成": False, "原因": "沒有可更新字段"}
+        db.execute(text(f"UPDATE profiles SET {', '.join(sets)}, updated_at=now() WHERE id=:u"), params)
+        db.commit()
+        return {"完成": True, "已更新": list(params.keys())}
+
+    def update_hard_facts(args: dict) -> dict:
+        """更新硬性事實（簽證/期望城市/薪資/到崗時間/年限），畫像與元信息表雙寫。"""
+        keys = {
+            "visa_status": "簽證狀態", "preferred_locations": "期望城市",
+            "salary_expectation": "期望薪資", "availability": "可到崗時間",
+            "total_years": "工作年限",
+        }
+        updated = {}
+        for k in keys:
+            if k in args and args[k] not in (None, ""):
+                v = str(args[k]).strip()
+                db.execute(text(
+                    "UPDATE candidate_profiles SET hard_facts = "
+                    "jsonb_set(COALESCE(hard_facts,'{}'::jsonb), :k, to_jsonb(:v::text)) "
+                    "WHERE user_id=:u AND is_current=true"
+                ), {"k": "{" + k + "}", "v": v, "u": user_id})
+                db.execute(text(
+                    "INSERT INTO user_info_fields (user_id, key, value, source) VALUES (:u,:k,:v,'chat') "
+                    "ON CONFLICT (user_id, key) DO UPDATE SET value=EXCLUDED.value, source='chat', updated_at=now()"
+                ), {"u": user_id, "k": k, "v": v})
+                updated[k] = v
+        db.commit()
+        if not updated:
+            return {"完成": False, "原因": f"請提供要更新的字段：{list(keys.values())}"}
+        return {"完成": True, "已更新": updated}
+
+    def upsert_info_field(args: dict) -> dict:
+        key = str(args.get("key") or "").strip()
+        value = str(args.get("value") or "").strip()
+        if not key or not value:
+            return {"完成": False, "原因": "需要 key 和 value"}
+        db.execute(text(
+            "INSERT INTO user_info_fields (user_id, key, value, source) VALUES (:u,:k,:v,'chat') "
+            "ON CONFLICT (user_id, key) DO UPDATE SET value=EXCLUDED.value, source='chat', updated_at=now()"
+        ), {"u": user_id, "k": key[:100], "v": value[:2000]})
+        db.commit()
+        return {"完成": True}
 
     tools = [
         {"type": "function", "function": {
@@ -223,13 +331,56 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
         }},
         {"type": "function", "function": {
             "name": "apply_rules",
-            "description": "查詢當前生效的投遞規則（一崗一投/校招年限/閾值/地區加權/速率限制），用戶詢問規則或限制時調用",
+            "description": "查詢當前生效的投遞規則（一崗一投/校招社招偏好/閾值/地區加權/速率限制），用戶詢問規則或限制時調用",
             "parameters": {"type": "object", "properties": {}},
         }},
         {"type": "function", "function": {
             "name": "list_info_fields",
             "description": "查詢用戶的個人信息庫（元信息表）與自動填寫規則，用戶詢問信息互補/自動填充時調用",
             "parameters": {"type": "object", "properties": {}},
+        }},
+        {"type": "function", "function": {
+            "name": "find_job",
+            "description": "按關鍵詞/公司精確搜索崗位庫（例如「AI產品經理」），返回崗位與最新貼合度",
+            "parameters": {"type": "object", "properties": {
+                "keyword": {"type": "string", "description": "職位關鍵詞"},
+                "company": {"type": "string", "description": "公司名（可選）"},
+            }},
+        }},
+        {"type": "function", "function": {
+            "name": "score_job",
+            "description": "對指定崗位用當前畫像現場重算貼合度（用戶問某個崗位貼合度時調用，保證數據最新）",
+            "parameters": {"type": "object", "properties": {
+                "keyword": {"type": "string", "description": "職位關鍵詞"},
+                "company": {"type": "string", "description": "公司名（可選）"},
+            }},
+        }},
+        {"type": "function", "function": {
+            "name": "update_basic_info",
+            "description": "直接更新用戶基本信息（full_name 姓名/暱稱、phone 手機號），無需用戶去別處操作",
+            "parameters": {"type": "object", "properties": {
+                "full_name": {"type": "string"},
+                "phone": {"type": "string"},
+            }},
+        }},
+        {"type": "function", "function": {
+            "name": "update_hard_facts",
+            "description": "直接更新硬性事實（visa_status簽證/salary_expectation期望薪資/availability到崗時間/total_years工作年限/preferred_locations期望城市），同步畫像與元信息表",
+            "parameters": {"type": "object", "properties": {
+                "visa_status": {"type": "string"},
+                "salary_expectation": {"type": "string"},
+                "availability": {"type": "string"},
+                "total_years": {"type": "string"},
+                "preferred_locations": {"type": "string", "description": "逗號分隔的城市"},
+            }},
+        }},
+        {"type": "function", "function": {
+            "name": "upsert_info_field",
+            "description": "寫入/更新元信息表的一條字段問答（key + value），供投遞表單自動互補",
+            "parameters": {"type": "object", "properties": {
+                "key": {"type": "string"},
+                "value": {"type": "string"},
+            }},
         }},
     ]
     executor = {
@@ -242,6 +393,11 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
         "update_settings": update_settings,
         "apply_rules": apply_rules,
         "list_info_fields": list_info_fields,
+        "find_job": find_job,
+        "score_job": score_job,
+        "update_basic_info": update_basic_info,
+        "update_hard_facts": update_hard_facts,
+        "upsert_info_field": upsert_info_field,
     }
     return tools, lambda name, args: executor[name](args or {})
 
