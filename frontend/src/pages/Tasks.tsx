@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import Header from "../components/Header";
 
 type Task = {
   id: string;
@@ -65,9 +64,7 @@ export default function Tasks() {
   }
 
   return (
-    <div className="page">
-      <Header />
-      <main className="narrow">
+    <div className="page">      <main className="narrow">
         <div className="card wide">
           <h2>待你處理（FR-3c 直接框）</h2>
           <p className="muted">

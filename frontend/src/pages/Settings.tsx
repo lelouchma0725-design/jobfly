@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import Header from "../components/Header";
 
 type Settings = {
   ai_optimize_resume: boolean;
@@ -68,9 +67,7 @@ export default function Settings() {
   }
 
   return (
-    <div className="page">
-      <Header />
-      <main className="narrow">
+    <div className="page">      <main className="narrow">
         <div className="card">
           <h2>投遞與推送設置</h2>
 

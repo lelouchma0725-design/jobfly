@@ -35,7 +35,7 @@ QUEUE_LIMIT = 50  # 每輪 process_queue 處理上限（免費層資源控制）
 # 人工回填允許覆蓋的字段白名單（防止注入任意鍵）
 ANSWER_WHITELIST = {
     "full_name", "email", "phone", "location", "visa_status", "availability",
-    "salary_expectation", "linkedin_url", "portfolio_url",
+    "salary_expectation", "linkedin_url", "portfolio_url", "sms_code",
 }
 
 

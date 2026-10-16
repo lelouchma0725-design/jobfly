@@ -104,3 +104,49 @@ def chat_json(
             last_err = str(exc)
             logger.warning("JSON 解析失敗，重試 %s/%s: %s", attempt + 1, retries, exc)
     raise RuntimeError(f"LLM 多次輸出非法 JSON: {last_err}")
+
+
+def chat_with_tools(
+    system: str,
+    messages: list[dict],
+    tools: list[dict],
+    tool_executor,
+    *,
+    model: str | None = None,
+    max_iters: int = 6,
+) -> str:
+    """函數調用（tool calling）代理循環：LLM 決定調用工具 → 執行 → 回填結果。
+
+    tool_executor: callable(name: str, args: dict) -> dict
+    返回最終的助手文本回覆。
+    """
+    msgs: list[dict] = [{"role": "system", "content": system}, *messages]
+    for _ in range(max_iters):
+        resp = _get_client().chat.completions.create(
+            model=model or settings.llm_model,
+            messages=msgs,
+            tools=tools,
+            max_tokens=2000,
+            temperature=0.3,
+        )
+        msg = resp.choices[0].message
+        if not msg.tool_calls:
+            return msg.content or ""
+        msgs.append(msg)  # assistant 帶 tool_calls 的消息
+        for tc in msg.tool_calls:
+            name = tc.function.name
+            try:
+                args = json.loads(tc.function.arguments or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            try:
+                result = tool_executor(name, args)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("工具執行失敗 %s", name)
+                result = {"error": str(exc)[:500]}
+            msgs.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": json.dumps(result, ensure_ascii=False)[:6000],
+            })
+    return "（操作步驟過多，請簡化您的問題後再試）"

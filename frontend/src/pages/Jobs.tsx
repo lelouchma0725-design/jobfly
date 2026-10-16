@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import Header from "../components/Header";
 
 type Job = {
   id: string;
@@ -84,9 +83,7 @@ export default function Jobs() {
   }
 
   return (
-    <div className="page">
-      <Header />
-      <main className="narrow">
+    <div className="page">      <main className="narrow">
         <div className="card wide">
           <h2>崗位庫（FR-3a）</h2>
           <div className="row wrap">

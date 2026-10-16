@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import Header from "../components/Header";
 
 type Company = {
   id: string;
@@ -74,9 +73,7 @@ export default function Companies() {
   }
 
   return (
-    <div className="page">
-      <Header />
-      <main className="narrow">
+    <div className="page">      <main className="narrow">
         <div className="card wide">
           <h2>關注公司（FR-1d）</h2>
           <p className="muted">

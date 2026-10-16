@@ -1,18 +1,11 @@
 import { useEffect, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
-import { getSession, signOut } from "./lib/auth";
+import { getSession } from "./lib/auth";
 import type { AuthSession } from "./lib/auth";
+import Header from "./components/Header";
 import Login from "./pages/Login";
-import Settings from "./pages/Settings";
-import Dashboard from "./pages/Dashboard";
-import Documents from "./pages/Documents";
-import Accounts from "./pages/Accounts";
-import Companies from "./pages/Companies";
-import Profile from "./pages/Profile";
-import Jobs from "./pages/Jobs";
-import Matches from "./pages/Matches";
-import Applications from "./pages/Applications";
-import Tasks from "./pages/Tasks";
+import Home from "./pages/Home";
+import Me from "./pages/Me";
 import Admin from "./pages/Admin";
 
 export default function App() {
@@ -26,21 +19,14 @@ export default function App() {
   if (!session) return <Login onLogin={setSession} />;
 
   return (
-    <Routes>
-      <Route path="/" element={<Dashboard />} />
-      <Route path="/settings" element={<Settings />} />
-      <Route path="/jobs" element={<Jobs />} />
-      <Route path="/matches" element={<Matches />} />
-      <Route path="/applications" element={<Applications />} />
-      <Route path="/tasks" element={<Tasks />} />
-      <Route path="/admin" element={<Admin />} />
-      <Route path="/documents" element={<Documents />} />
-      <Route path="/profile" element={<Profile />} />
-      <Route path="/accounts" element={<Accounts />} />
-      <Route path="/companies" element={<Companies />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <div className="page">
+      <Header />
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/me" element={<Me />} />
+        <Route path="/admin" element={<Admin />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </div>
   );
 }
-
-export { signOut };

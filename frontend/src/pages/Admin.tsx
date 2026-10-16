@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import Header from "../components/Header";
 
 type Stats = {
   users: number;
@@ -52,17 +51,13 @@ export default function Admin() {
 
   if (err) {
     return (
-      <div className="page">
-        <Header />
-        <main className="narrow"><div className="card"><h2>管理後台</h2><p className="notice">{err}</p></div></main>
+      <div className="page">        <main className="narrow"><div className="card"><h2>管理後台</h2><p className="notice">{err}</p></div></main>
       </div>
     );
   }
 
   return (
-    <div className="page">
-      <Header />
-      <main className="narrow">
+    <div className="page">      <main className="narrow">
         <div className="card wide">
           <h2>管理後台（GAP-10）</h2>
           {stats && (
