@@ -11,6 +11,7 @@ type Match = {
   is_campus: boolean;
   org_level: string;
   department: string | null;
+  directions: string[];
   hard_failures: unknown[];
   reasons: string[];
   score_breakdown: Record<string, number | string>;
@@ -55,7 +56,24 @@ export default function Matches() {
   const [companyInput, setCompanyInput] = useState("");
   const [company, setCompany] = useState("");
   const [msg, setMsg] = useState("");
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  function toggleExpand(id: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function expandAll() {
+    setExpanded(new Set(items.map((m) => m.id)));
+  }
+
+  function collapseAll() {
+    setExpanded(new Set());
+  }
   const [limit, setLimit] = useState(20);
   const [offset, setOffset] = useState(0);
 
@@ -174,6 +192,12 @@ export default function Matches() {
             <button className="ghost" onClick={() => void rematch(!!company)}>
               🔄 {company ? `重新匹配「${company}」` : "全量重新匹配"}
             </button>
+            <button className="ghost" onClick={expandAll}>
+              ⬇ 展開全部
+            </button>
+            <button className="ghost" onClick={collapseAll}>
+              ⬆ 收起全部
+            </button>
           </div>
           <p className="notice">{msg}</p>
           <p className="muted">
@@ -196,7 +220,7 @@ export default function Matches() {
                 <>
                   <tr
                     key={m.id}
-                    onClick={() => setExpanded(expanded === m.id ? null : m.id)}
+                    onClick={() => toggleExpand(m.id)}
                     style={{ cursor: "pointer" }}
                   >
                     <td>{m.company_name}</td>
@@ -210,7 +234,7 @@ export default function Matches() {
                     </td>
                     <td>{STATUS_TEXT[m.status] ?? m.status}</td>
                   </tr>
-                  {expanded === m.id && (
+                  {expanded.has(m.id) && (
                     <tr key={m.id + "-detail"}>
                       <td colSpan={6} className="match-detail">
                         <div className="row wrap" style={{ gap: 18 }}>
@@ -243,14 +267,35 @@ export default function Matches() {
                               </tbody>
                             </table>
                           </div>
+                          {(m.directions ?? []).length > 0 && (
+                            <div>
+                              <h4>崗位方向</h4>
+                              <p className="muted">{m.directions.join("、")}</p>
+                            </div>
+                          )}
                           <div style={{ flex: 1, minWidth: 240 }}>
-                            <h4>匹配理由</h4>
-                            <ul>
-                              {(m.reasons ?? []).map((r, i) => (
-                                <li key={i}>{r}</li>
-                              ))}
-                              {!(m.reasons ?? []).length && <li className="muted">—</li>}
-                            </ul>
+                            {m.match_score == null ? (
+                              <>
+                                <h4>硬性不符原因</h4>
+                                <ul>
+                                  {(m.hard_failures ?? []).map((hf, i) => (
+                                    <li key={i} className="notice-text">
+                                      {(hf as { requirement?: string }).requirement ?? JSON.stringify(hf)}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </>
+                            ) : (
+                              <>
+                                <h4>匹配理由</h4>
+                                <ul>
+                                  {(m.reasons ?? []).map((r, i) => (
+                                    <li key={i}>{r}</li>
+                                  ))}
+                                  {!(m.reasons ?? []).length && <li className="muted">—</li>}
+                                </ul>
+                              </>
+                            )}
                             {m.apply_url && (
                               <a href={m.apply_url} target="_blank" rel="noreferrer">
                                 {t("openApply")}

@@ -84,6 +84,13 @@ class CiticsCollector:
                     seen.add(key)
                     desc = (jb.get("positionDesc") or "").strip()
                     qual = (jb.get("qualification") or "").strip()
+                    # 崗位方向：描述中的「岗位分为N个方向：A、B、C」解析為列表
+                    import re as _re
+
+                    directions: list[str] = []
+                    m = _re.search(r"岗位分为\s*\d+\s*个方向[：:]\s*(.+)", desc)
+                    if m:
+                        directions = [d.strip() for d in _re.split(r"[、;；,，]", m.group(1)) if d.strip()]
                     postings.append(JobPosting(
                         source="citics",
                         external_id=key,
@@ -102,6 +109,7 @@ class CiticsCollector:
                             "tab": tab_name,
                             "is_campus": recruit_type == "08",
                             "batch_id": extra.get("batchId"),
+                            "directions": directions,
                             **jb,
                         },
                     ))
