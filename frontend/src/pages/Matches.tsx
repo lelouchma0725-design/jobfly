@@ -12,6 +12,7 @@ type Match = {
   org_level: string;
   department: string | null;
   directions: string[];
+  direction_scores: { direction: string; match_score: number; reasons: string[] }[];
   hard_failures: unknown[];
   reasons: string[];
   score_breakdown: Record<string, number | string>;
@@ -267,7 +268,26 @@ export default function Matches() {
                               </tbody>
                             </table>
                           </div>
-                          {(Array.isArray(m.directions) ? m.directions : []).length > 0 && (
+                          {(m.direction_scores ?? []).length > 0 && (
+                            <div>
+                              <h4>崗位方向貼合度（逐方向評分）</h4>
+                              <table className="mini">
+                                <tbody>
+                                  {(m.direction_scores ?? []).map((d) => (
+                                    <tr key={d.direction}>
+                                      <td>{d.direction}</td>
+                                      <td>
+                                        <b>{d.match_score}%</b>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                              <p className="muted">投遞仍為一崗一投（按職位提交，方向在官網申請時選擇）。</p>
+                            </div>
+                          )}
+                          {!(m.direction_scores ?? []).length &&
+                            (Array.isArray(m.directions) ? m.directions : []).length > 0 && (
                             <div>
                               <h4>崗位方向</h4>
                               <p className="muted">{(Array.isArray(m.directions) ? m.directions : []).join("、")}</p>
