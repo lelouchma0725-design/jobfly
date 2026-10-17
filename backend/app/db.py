@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import json
 from collections.abc import Generator
 
 from sqlalchemy import create_engine
@@ -35,6 +36,7 @@ def get_engine():
             pool_pre_ping=True,
             pool_size=5,
             max_overflow=5,
+            json_deserializer=json.loads,  # jsonb 字段自動返回 Python 對象（防 .get 崩潰）
         )
         _SessionLocal = sessionmaker(bind=_engine, autoflush=False, expire_on_commit=False)
     return _engine
