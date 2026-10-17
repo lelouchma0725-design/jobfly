@@ -251,7 +251,28 @@ def _load_account(db: Session, app: dict) -> dict | None:
                     or "國泰" in label or "国泰" in label or "gtht" in label):
                 return _decrypt(row)
 
+    if app["source"] == "citics":
+        # 中信帳號存 platform='official'，按網址/標籤匹配（platform_name 枚舉無 citics）
+        rows = db.execute(
+            text(
+                "SELECT id, platform, label, login_identifier_enc, password_enc, meta_enc "
+                "FROM platform_accounts "
+                "WHERE user_id=:uid AND status != 'locked' "
+                "AND (label ILIKE '%中信%' OR label ILIKE '%citics%') "
+                "ORDER BY created_at"
+            ),
+            {"uid": app["user_id"]},
+        ).mappings().all()
+        for row in rows:
+            return _decrypt(row)
+
+    # platform 需在枚舉內，否則枚舉非法值會中止事務
+    valid_platforms = ("workday", "greenhouse", "lever", "successfactors", "icims",
+                       "official", "liepin", "boss", "lagou", "zhilian", "job51",
+                       "linkedin", "indeed", "gtht", "other")
     for platform in (app["source"], "official"):
+        if platform not in valid_platforms:
+            continue
         row = db.execute(
             text(
                 "SELECT id, login_identifier_enc, password_enc FROM platform_accounts "
@@ -336,6 +357,10 @@ def run_application(db: Session, application_id: str, dry_run: bool = False, for
                 outcome = _settle(db, app, application_id, attempt_id, result)
     except Exception as exc:  # noqa: BLE001
         logger.exception("投遞執行異常 app=%s", application_id)
+        try:
+            db.rollback()  # 若事務已中止，先回滾再收尾（防 InFailedSqlTransaction 連鎖）
+        except Exception:  # noqa: BLE001
+            pass
         outcome = _finish(
             db, app, application_id,
             "failed_retryable" if app["attempts_count"] < MAX_RETRIES else "aborted",
