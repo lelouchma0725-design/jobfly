@@ -80,6 +80,7 @@ def create_applications_from_matches(db: Session, user_id: str) -> dict:
                 WHERE a2.user_id = :uid AND p2.company_name = p.company_name
                   AND a2.status NOT IN ('aborted', 'duplicate_skip', 'not_supported')
               )
+            ORDER BY m.match_score DESC NULLS LAST
             ON CONFLICT (user_id, posting_id) DO NOTHING
             """
         ),

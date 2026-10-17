@@ -24,8 +24,12 @@ DB = Annotated[Session, Depends(get_db)]
 def list_companies(user: CurrentUser, db: DB) -> list[dict]:
     rows = db.execute(
         text(
-            "SELECT id, company_name, aliases, careers_url, platform, notes, is_active, created_at "
-            "FROM watched_companies WHERE user_id = :uid ORDER BY created_at DESC"
+            """
+            SELECT DISTINCT ON (COALESCE(careers_url, company_name)) id, company_name, aliases,
+                   careers_url, platform, notes, is_active, created_at
+            FROM watched_companies WHERE user_id = :uid
+            ORDER BY COALESCE(careers_url, company_name), created_at
+            """
         ),
         {"uid": user["id"]},
     ).mappings().all()
