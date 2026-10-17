@@ -141,6 +141,22 @@ def get_current_profile(db: Session, user_id: str) -> dict | None:
     if not row:
         return None
     d = dict(row)
+    # 統一視圖：元信息表覆蓋畫像硬性事實（兩處永不矛盾）
+    info = db.execute(
+        text("SELECT key, value FROM user_info_fields WHERE user_id=:uid"),
+        {"uid": user_id},
+    ).mappings().all()
+    hf = dict(d.get("hard_facts") or {})
+    for r in info:
+        if r["key"] in hf or r["key"] in (
+            "visa_status", "preferred_locations", "salary_expectation",
+            "availability", "total_years", "candidate_name",
+        ):
+            v = r["value"]
+            if r["key"] == "preferred_locations" and isinstance(hf.get("preferred_locations"), list):
+                continue  # 期望城市以畫像列表為準
+            hf[r["key"]] = v
+    d["hard_facts"] = hf
     d["id"] = str(d["id"])
     d["based_on_resume_version_id"] = str(d["based_on_resume_version_id"]) if d["based_on_resume_version_id"] else None
     return d

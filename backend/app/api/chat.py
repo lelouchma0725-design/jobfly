@@ -193,7 +193,10 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
         if not q and not company:
             return {"error": "請提供 keyword 或 company"}
         # 繁→簡 + 分詞（按空白/特殊符號切）
-        t2s = str.maketrans("產品經理開發經驗數據應屆", "产品经理开发经验数据应届")
+        T2S_TABLE = str.maketrans(
+        "產品經理開發經驗數據應屆培訓員務職驗證聯網點類銀資訊質動發開範組織級務實習業專門間時機構規畫設計銷市場營銷務錢術歷係國體單與讀種長務風控優權廣東亞",  # noqa: E501
+        "产品经理开发经验数据应届培训业务职验证联网点类银资讯质动发开范组织级务实习业专门间时机构规划设计销市场营销业务钱术历系国体单与读种长务风控优权广东亚")
+
         q = q.translate(t2s)
         tokens = [t for t in q.replace("，", " ").replace("/", " ").split() if t]
         conds, params = [], {"u": user_id, "co": company}
@@ -205,7 +208,7 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
         rows = db.execute(text(
             f"""
             SELECT p.company_name, p.title, p.location, p.is_campus,
-                   m.match_score, m.status
+                   m.match_score, m.status, p.raw->>'tab' AS tab
             FROM job_postings p
             LEFT JOIN job_matches m ON m.posting_id = p.id AND m.user_id = :u
             WHERE p.is_active = true AND {token_where}
@@ -214,11 +217,26 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
             LIMIT 10
             """
         ), params).mappings().all()
+        if not rows and len(tokens) > 1:
+            or_where = "(" + " OR ".join(conds) + ")"
+            rows = db.execute(text(
+                f"""
+                SELECT p.company_name, p.title, p.location, p.is_campus,
+                       m.match_score, m.status
+                FROM job_postings p
+                LEFT JOIN job_matches m ON m.posting_id = p.id AND m.user_id = :u
+                WHERE p.is_active = true AND {or_where}
+                  AND (CAST(:co AS text) = '' OR p.company_name ILIKE '%'||:co||'%')
+                ORDER BY m.match_score DESC NULLS LAST, p.first_seen_at DESC
+                LIMIT 10
+                """
+            ), params).mappings().all()
         if not rows:
             return {"找到": 0, "提示": "崗位庫中沒有匹配的崗位；可先調用 run_collect 採集最新崗位後再查"}
         return {"找到": len(rows), "崗位": [
             {"公司": r["company_name"], "職位": r["title"], "地點": r["location"],
-             "校招": r["is_campus"], "貼合度": r["match_score"], "狀態": r["status"]}
+             "校招": r["is_campus"], "貼合度": r["match_score"], "狀態": r["status"],
+             "來源": (r["tab"] or "")}
             for r in rows
         ]}
 
@@ -226,7 +244,10 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
         """對指定崗位即時評分（忽略緩存，用當前畫像現場重算）。"""
         q = str(args.get("keyword") or "").strip()
         company = str(args.get("company") or "").strip()
-        t2s = str.maketrans("產品經理開發經驗數據應屆", "产品经理开发经验数据应届")
+        T2S_TABLE = str.maketrans(
+        "產品經理開發經驗數據應屆培訓員務職驗證聯網點類銀資訊質動發開範組織級務實習業專門間時機構規畫設計銷市場營銷務錢術歷係國體單與讀種長務風控優權廣東亞",  # noqa: E501
+        "产品经理开发经验数据应届培训业务职验证联网点类银资讯质动发开范组织级务实习业专门间时机构规划设计销市场营销业务钱术历系国体单与读种长务风控优权广东亚")
+
         q = q.translate(t2s)
         tokens = [t for t in q.replace("，", " ").replace("/", " ").split() if t]
         conds, params = [], {"co": company}

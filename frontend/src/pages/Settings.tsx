@@ -178,11 +178,30 @@ export default function Settings() {
           <h3>每日推送</h3>
           <label className="row">
             推送時間
-            <input
-              type="time"
-              value={s.push_time_local}
-              onChange={(e) => save({ push_time_local: e.target.value })}
-            />
+            <select
+              value={s.push_time_local.slice(0, 2)}
+              onChange={(e) =>
+                save({ push_time_local: `${e.target.value}:${s.push_time_local.slice(3, 5)}` })
+              }
+            >
+              {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0")).map((h) => (
+                <option key={h} value={h}>
+                  {h} 時
+                </option>
+              ))}
+            </select>
+            <select
+              value={s.push_time_local.slice(3, 5)}
+              onChange={(e) =>
+                save({ push_time_local: `${s.push_time_local.slice(0, 2)}:${e.target.value}` })
+              }
+            >
+              {["00", "15", "30", "45"].map((mn) => (
+                <option key={mn} value={mn}>
+                  {mn} 分
+                </option>
+              ))}
+            </select>
           </label>
           <label className="row">
             時區
