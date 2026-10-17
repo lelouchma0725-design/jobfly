@@ -57,11 +57,39 @@ class CiticsApplyAdapter:
                 return auto
 
         job_title = (ctx.posting.get("title") or "").strip()
+        apply_url = ctx.posting.get("apply_url") or APPLY_URL
+        raw = ctx.posting.get("raw") or {}
+        directions = (raw.get("directions") or []) if isinstance(raw, dict) else []
+        direction_note = f"（崗位含方向：{'、'.join(directions)}，申請時按需選擇）" if directions else ""
+        payload = ctx.payload or {}
+        skills = ", ".join(s["name"] for s in (payload.get("skills") or []))
+        exp_lines = [
+            f"{e.get('start')} ~ {e.get('end')} {e.get('company')} {e.get('title')}"
+            for e in (payload.get("experiences") or [])[:5]
+        ]
+        edu_lines = [
+            f"{e.get('school')} {e.get('degree')} {e.get('major')}"
+            for e in (payload.get("education") or [])
+        ]
+        fill_block = (
+            "📋 填寫方案（複製到官網對應欄位）：\n"
+            f"姓名：{payload.get('full_name') or '（未填）'}\n"
+            f"手機：{payload.get('phone') or '（未填）'}\n"
+            f"郵箱：{payload.get('email') or '（未填）'}\n"
+            f"簽證狀態：{payload.get('visa_status') or '（未填）'}\n"
+            f"期望薪資：{payload.get('salary_expectation') or '（未填）'}\n"
+            f"可到崗時間：{payload.get('availability') or '（未填）'}\n"
+            f"技能：{skills or '（未填）'}\n"
+            f"工作經歷：\n" + ("\n".join(exp_lines) or "（未填）") + "\n"
+            f"教育：{'；'.join(edu_lines) or '（未填）'}"
+        )
         question = (
-            f"中信證券「{job_title}」需要你在官網完成登錄與申請（服務端無法通過圖形驗證碼）：\n"
-            "1. 打開 https://careers.citics.com 用手機號登錄（圖形驗證 + 短信碼）\n"
-            f"2. 在「校園招聘 → 分支機構」找到「{job_title}」並完成申請\n"
+            f"中信證券「{job_title}」{direction_note}需要你在官網完成登錄與申請"
+            "（服務端無法通過圖形驗證碼，這一步只能由你本人完成）：\n"
+            f"1. 打開 {apply_url} 用手機號登錄（圖形驗證 + 短信碼）\n"
+            f"2. 在列表中找到「{job_title}」並完成申請\n"
             "3. 完成後回到這裡勾選確認（如有申請編號請填寫）\n"
+            f"{fill_block}\n"
             "（系統將記錄為已投遞·人工確認；今後同公司投遞會再次嘗試自動化）"
         )
         return ApplyResult(
