@@ -267,10 +267,10 @@ export default function Matches() {
                               </tbody>
                             </table>
                           </div>
-                          {(m.directions ?? []).length > 0 && (
+                          {(Array.isArray(m.directions) ? m.directions : []).length > 0 && (
                             <div>
                               <h4>崗位方向</h4>
-                              <p className="muted">{m.directions.join("、")}</p>
+                              <p className="muted">{(Array.isArray(m.directions) ? m.directions : []).join("、")}</p>
                             </div>
                           )}
                           <div style={{ flex: 1, minWidth: 240 }}>

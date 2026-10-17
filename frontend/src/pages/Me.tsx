@@ -7,7 +7,7 @@ import Documents from "./Documents";
 import Accounts from "./Accounts";
 import Companies from "./Companies";
 import Settings from "./Settings";
-import Jobs from "./Jobs";
+import MatchJobs from "./MatchJobs";
 import Matches from "./Matches";
 import Applications from "./Applications";
 import Tasks from "./Tasks";
@@ -19,8 +19,7 @@ const TABS = [
   ["accounts", "accounts", Accounts],
   ["companies", "companies", Companies],
   ["settings", "settings", Settings],
-  ["jobs", "jobBoard", Jobs],
-  ["matches", "myMatches", Matches],
+  ["matchjobs", "matchJobs", MatchJobs],
   ["applications", "applications", Applications],
   ["tasks", "tasks", Tasks],
 ] as const;

@@ -463,3 +463,8 @@ table.mini td {
   border: none;
   font-size: 13px;
 }
+
+.notice.success {
+  color: #15803d;
+  font-weight: 600;
+}
