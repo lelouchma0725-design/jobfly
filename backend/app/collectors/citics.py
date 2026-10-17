@@ -91,12 +91,16 @@ class CiticsCollector:
                     m = _re.search(r"岗位分为\s*\d+\s*个方向[：:]\s*(.+)", desc)
                     if m:
                         directions = [d.strip() for d in _re.split(r"[、;；,，]", m.group(1)) if d.strip()]
+                    _deep_link = {
+                        "校園招聘·分支機構": f"{BASE}/campus/branch",
+                        "校園招聘·總部": f"{BASE}/campus/headquarters",
+                    }.get(tab_name, BASE)
                     postings.append(JobPosting(
                         source="citics",
                         external_id=key,
                         company_name=COMPANY_NAME,
                         title=(jb.get("positionName") or "").strip(),
-                        apply_url=f"{BASE}/campus/branch",
+                        apply_url=_deep_link,
                         location=(jb.get("workplace") or "").strip() or None,
                         department=(jb.get("deptName") or "").strip() or None,
                         description_text=(

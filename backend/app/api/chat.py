@@ -348,6 +348,60 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
         db.commit()
         return {"完成": True}
 
+    def apply_job(args: dict) -> dict:
+        """直接投遞指定崗位：建 application + 觸發投遞適配器，返回結果或人工任務指引。"""
+        from app.services.apply_engine import run_application
+
+        q = _t2s(str(args.get("keyword") or "").strip())
+        company = str(args.get("company") or "").strip()
+        tokens = [t for t in q.replace("，", " ").replace("/", " ").split() if t]
+        conds, params = [], {"u": user_id, "co": company}
+        for i, tok in enumerate(tokens[:6]):
+            conds.append("p.title ILIKE '%'||:t" + str(i) + "||'%'")
+            params["t" + str(i)] = tok
+        token_where = ("(" + " AND ".join(f"({c})" for c in conds) + ")") if conds else "true"
+        posting = db.execute(text(
+            f"""
+            SELECT p.id, p.company_name, p.title, p.apply_url,
+                   m.id AS match_id, m.match_score
+            FROM job_postings p
+            LEFT JOIN job_matches m ON m.posting_id = p.id AND m.user_id = :u
+            WHERE p.is_active = true AND {token_where}
+              AND (CAST(:co AS text) = '' OR p.company_name ILIKE '%'||:co||'%')
+            ORDER BY m.priority_score DESC NULLS LAST, p.first_seen_at DESC LIMIT 1
+            """
+        ), params).mappings().first()
+        if not posting:
+            return {"error": "未找到該崗位，請先確認崗位名稱或先採集"}
+        if posting["match_score"] is None:
+            return {"error": f"該崗位貼合度未通過硬性條件，無法投遞（{posting['company_name']} · {posting['title']}）"}
+        # 建/取 application
+        app = db.execute(text(
+            """
+            INSERT INTO applications (user_id, posting_id, match_id, status)
+            VALUES (:u, :p, :m, 'queued')
+            ON CONFLICT (user_id, posting_id) DO UPDATE SET status='queued', status_reason=NULL,
+              next_retry_at=NULL, updated_at=now()
+            RETURNING id
+            """
+        ), {"u": user_id, "p": posting["id"], "m": posting["match_id"]}).mappings().one()
+        db.commit()
+        try:
+            result = run_application(db, str(app["id"]), force=True)
+        except Exception as exc:  # noqa: BLE001
+            result = {"status": "error", "error": str(exc)[:300]}
+        if result.get("status") == "submitted":
+            return {"完成": True, "投遞": "已提交", "崗位": f"{posting['company_name']} · {posting['title']}"}
+        if result.get("status") == "needs_input":
+            task = db.execute(text(
+                "SELECT id, task_type, question, options FROM manual_tasks "
+                "WHERE application_id=:aid AND status='open' ORDER BY created_at DESC LIMIT 1"
+            ), {"aid": str(app["id"])}).mappings().first()
+            return {"完成": False, "需要人工": True, "任務類型": task["task_type"],
+                    "指引": task["question"] if task else "", "任務ID": str(task["id"]) if task else None,
+                    "操作": "請到「我的資料 → 待處理」按指引完成（驗證碼/官網確認）"}
+        return {"完成": False, "狀態": result.get("status"), "詳情": str(result)[:300]}
+
     tools = [
         {"type": "function", "function": {
             "name": "get_status",
@@ -442,6 +496,14 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
                 "value": {"type": "string"},
             }},
         }},
+        {"type": "function", "function": {
+            "name": "apply_job",
+            "description": "直接投遞指定崗位（用戶說「幫我投遞XX」時必須調用）：建投遞單並觸發投遞，返回成功或人工任務指引",
+            "parameters": {"type": "object", "properties": {
+                "keyword": {"type": "string", "description": "職位關鍵詞"},
+                "company": {"type": "string", "description": "公司名（可選）"},
+            }},
+        }},
     ]
     executor = {
         "get_status": get_status,
@@ -458,6 +520,7 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
         "update_basic_info": update_basic_info,
         "update_hard_facts": update_hard_facts,
         "upsert_info_field": upsert_info_field,
+        "apply_job": apply_job,
     }
     return tools, lambda name, args: executor[name](args or {})
 
