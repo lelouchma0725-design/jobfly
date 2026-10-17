@@ -59,8 +59,49 @@ export default function Jobs() {
   }
   useEffect(() => {
     void load();
+    // 返回頁面時恢復採集狀態：完成過 → 綠色提示；進行中 → 自動繼續輪詢
+    api<{ running: boolean; finished_at: string | null; report: Record<string, number> | null }>(
+      "/api/jobs/collect-status",
+    )
+      .then((st) => {
+        if (st.running) {
+          pollCollect(0);
+        } else if (st.finished_at && st.report) {
+          const rp = st.report;
+          setCollectOk(true);
+          setMsg(
+            `✅ 上次採集已完成：新增 ${rp.new ?? 0}，更新 ${rp.updated ?? 0}，匹配 ${rp.matched ?? 0}，錯誤 ${rp.errors ?? 0}。點「刷新」查看最新崗位。`,
+          );
+        }
+      })
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [limit, offset]);
+
+  function pollCollect(tries: number) {
+    if (tries > 60) {
+      setMsg("採集仍在後台進行，稍後點「刷新」查看");
+      setBusy(false);
+      return;
+    }
+    window.setTimeout(async () => {
+      try {
+        const st = await api<{ running: boolean; finished_at: string | null; report: Record<string, number> | null }>(
+          "/api/jobs/collect-status",
+        );
+        if (!st.running && st.finished_at) {
+          const rp = st.report ?? {};
+          setCollectOk(true);
+          setMsg(`✅ 採集完成：新增 ${rp.new ?? 0}，更新 ${rp.updated ?? 0}，匹配 ${rp.matched ?? 0}，錯誤 ${rp.errors ?? 0}。點「刷新」查看最新崗位。`);
+          setBusy(false);
+        } else {
+          pollCollect(tries + 1);
+        }
+      } catch {
+        setBusy(false);
+      }
+    }, 8000);
+  }
 
   const [collectOk, setCollectOk] = useState(false);
 
@@ -73,30 +114,7 @@ export default function Jobs() {
         method: "POST",
         body: JSON.stringify({ company: onlyCompany ? company || null : null }),
       });
-      // 輪詢採集進度，完成後綠色提示
-      let tries = 0;
-      const timer = window.setInterval(async () => {
-        tries += 1;
-        try {
-          const st = await api<{ running: boolean; finished_at: string | null; report: Record<string, number> | null }>(
-            "/api/jobs/collect-status",
-          );
-          if (!st.running && st.finished_at) {
-            window.clearInterval(timer);
-            const rp = st.report ?? {};
-            setCollectOk(true);
-            setMsg(`✅ 採集完成：新增 ${rp.new ?? 0}，更新 ${rp.updated ?? 0}，匹配 ${rp.matched ?? 0}，錯誤 ${rp.errors ?? 0}。點「刷新」查看最新崗位。`);
-            setBusy(false);
-          } else if (tries > 60) {
-            window.clearInterval(timer);
-            setMsg("採集仍在後台進行，稍後點「刷新」查看");
-            setBusy(false);
-          }
-        } catch {
-          window.clearInterval(timer);
-          setBusy(false);
-        }
-      }, 8000);
+      pollCollect(0);
     } catch (e) {
       setMsg(`採集失敗: ${(e as Error).message}`);
       setBusy(false);

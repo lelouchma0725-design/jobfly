@@ -32,6 +32,16 @@ _SCORE_SYSTEM = """
 {"match_score": 50-100, "breakdown": {"skills_overlap": 0-100, "experience_fit": 0-100, "level_fit": 0-100, "location_fit": 0-100, "salary_fit": 0-100}, "reasons": ["理由1", "理由2", "理由3"]}
 """
 
+_SEMANTIC_SYSTEM = """
+你是招聘篩選助手。候選人的資料是結構化字段 + 個人信息庫問答的合集。
+規則檢查可能因為字段命名差異誤判，你需要用「聯想能力」判斷：
+候選人資料中的任何一條信息（無論放在哪個字段）只要能**實質滿足**該要求，就判 pass=true。
+例如：要求「熟練使用中英文作為工作語言」，信息庫寫「英文：專業（可作為工作語言）」→ pass=true。
+要求「碩士學歷」而教育經歷最高為本科 → pass=false（不要放水）。
+輸出 JSON（不要輸出其他內容）：
+{"results": [{"index": 0, "pass": true, "note": "一句話原因"}]}
+"""
+
 
 def extract_hard_requirements(jd_text: str) -> list[dict]:
     out = chat_json(_HARD_SYSTEM, f"JD：\n{jd_text[:8000]}")
@@ -64,6 +74,32 @@ def _check_against(profile: dict, req: dict) -> bool:
         locs = " ".join(hard.get("preferred_locations") or [])
         return bool(locs)
     return True
+
+
+def _semantic_recheck(db: Session, user_id: str, profile: dict, requirements: list[dict]) -> list[dict]:
+    """聯想能力兜底：規則判定失敗的要求，用 LLM 帶候選人全量資料語義確認。"""
+    info = db.execute(
+        text("SELECT key, value FROM user_info_fields WHERE user_id=:uid"),
+        {"uid": user_id},
+    ).mappings().all()
+    candidate = {
+        "硬性事實": profile.get("hard_facts") or {},
+        "語言能力": profile.get("languages") or [],
+        "技能": [s.get("name") if isinstance(s, dict) else s for s in (profile.get("skills") or [])],
+        "教育": profile.get("education") or [],
+        "經歷": profile.get("experiences") or [],
+        "個人信息庫": {r["key"]: r["value"] for r in info},
+    }
+    out = chat_json(
+        _SEMANTIC_SYSTEM,
+        f"候選人資料：{j(candidate)}\n待確認要求：{j(requirements)}",
+    )
+    results = out.get("results") or []
+    by_index = {int(r.get("index", -1)): r for r in results if isinstance(r, dict)}
+    return [
+        f for i, f in enumerate(requirements)
+        if not (by_index.get(i) or {}).get("pass", False)
+    ]
 
 
 def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
@@ -110,6 +146,12 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
         r for r in hard_reqs
         if r.get("kind") != "location" and not _check_against(dict(profile), r)
     ]
+    # 聯想能力兜底：規則失敗的要求交由 LLM 語義二次確認（字段命名差異不再誤殺）
+    if failures:
+        try:
+            failures = _semantic_recheck(db, user_id, dict(profile), failures)
+        except Exception:  # noqa: BLE001
+            logger.exception("硬性要求語義確認失敗，按規則結果處理 user=%s", user_id)
 
     # 校招/社招偏好與職級適配（投遞規則 R2 修訂版）：
     # - 用戶偏好只投社招 → 校招崗位硬性過濾
@@ -225,11 +267,19 @@ def _org_adjust(db: Session, user_id: str, org_level: str) -> int:
 
 def _is_campus_posting(posting: dict) -> bool:
     """判斷是否校招/應屆類崗位（標題/JD/採集元數據）。"""
+    raw = posting.get("raw") or {}
+    if isinstance(raw, str):  # 防禦：raw 偶爾以字符串返回
+        try:
+            import json as _json
+
+            raw = _json.loads(raw)
+        except ValueError:
+            raw = {}
     text = " ".join([
         posting.get("title") or "",
         posting.get("description_text") or "",
-        str((posting.get("raw") or {}).get("tab") or ""),
-        str((posting.get("raw") or {}).get("recruit_type") or ""),
+        str(raw.get("tab") or ""),
+        str(raw.get("recruit_type") or ""),
     ]).lower()
     hints = ("校招", "校园", "应届", "應屆", "管培生", "培训生", "培訓生", "秋招", "春招", "2027届", "2027屆")
     return any(h in text for h in hints)
