@@ -197,7 +197,7 @@ def list_matches(
         text(
             """
             SELECT m.id, m.posting_id, m.match_score, m.priority_score, m.hard_failures,
-                   m.reasons, m.status,
+                   m.reasons, m.score_breakdown, m.status,
                    p.company_name, p.title, p.location, p.department, p.is_campus,
                    p.org_level, p.apply_url, p.first_seen_at
             FROM job_matches m
@@ -240,6 +240,7 @@ def list_matches(
                 "org_level": r["org_level"],
                 "department": r["department"],
                 "hard_failures": r["hard_failures"] or [],
+                "score_breakdown": r["score_breakdown"] or {},
                 "reasons": r["reasons"] or [],
                 "status": r["status"],
                 "company_name": r["company_name"],

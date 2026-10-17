@@ -348,3 +348,118 @@ button.small {
 .tab-content main {
   padding: 0;
 }
+
+/* ── 聊天側欄與輸入 ───────────────────────────── */
+.chat-page {
+  display: flex;
+  gap: 12px;
+  height: calc(100vh - 90px);
+}
+.chat-sidebar {
+  width: 200px;
+  min-width: 160px;
+  border-right: 1px solid #e5e7eb;
+  padding: 8px;
+  overflow-y: auto;
+  background: #fafafa;
+  border-radius: 10px;
+}
+.conv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+.conv-item {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 6px;
+  padding: 2px 4px;
+}
+.conv-item.active {
+  background: #e0e7ff;
+}
+.conv-title {
+  flex: 1;
+  text-align: left;
+  font-size: 12px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #1f2937;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conv-del {
+  background: none;
+  border: none;
+  color: #9ca3af;
+  cursor: pointer;
+  font-size: 11px;
+}
+.conv-del:hover {
+  color: #dc2626;
+}
+.chat-box {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.chat-input textarea {
+  flex: 1;
+  resize: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-y: auto;
+  line-height: 1.4;
+  min-height: 38px;
+  max-height: 160px;
+}
+.chat-input {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.quick-toggle {
+  position: relative;
+}
+.quick-pop {
+  position: absolute;
+  bottom: 42px;
+  left: 0;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 260px;
+  z-index: 50;
+}
+.quick-pop button {
+  text-align: left;
+  justify-content: flex-start;
+}
+
+/* ── 匹配詳情展開 ─────────────────────────────── */
+.match-detail {
+  background: #f8fafc;
+  padding: 12px 16px;
+}
+.match-detail h4 {
+  margin: 4px 0 8px;
+  font-size: 14px;
+}
+table.mini {
+  border: none;
+}
+table.mini td {
+  padding: 3px 10px 3px 0;
+  border: none;
+  font-size: 13px;
+}
