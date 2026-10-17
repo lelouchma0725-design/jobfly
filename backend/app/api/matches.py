@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
+from app.core.jsonutil import loads_json
 from app.db import get_db
 from app.services.matching import score_posting
 
@@ -239,7 +240,8 @@ def list_matches(
                 "is_campus": r["is_campus"],
                 "org_level": r["org_level"],
                 "department": r["department"],
-                "directions": r["directions"] if isinstance(r["directions"], list) else [],
+                "directions": loads_json(r["directions"])
+                if isinstance(r["directions"], str) else (r["directions"] or []),
                 "hard_failures": r["hard_failures"] or [],
                 "score_breakdown": r["score_breakdown"] or {},
                 "reasons": r["reasons"] or [],

@@ -9,3 +9,13 @@ def j(v) -> str | None:
     if v is None:
         return None
     return json.dumps(v, ensure_ascii=False)
+
+
+def loads_json(v):
+    """安全解析 JSON 字符串（jsonb 經 psycopg 可能以字符串返回）；失敗返回原值。"""
+    if not isinstance(v, str):
+        return v
+    try:
+        return json.loads(v)
+    except (ValueError, TypeError):
+        return v
