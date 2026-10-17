@@ -201,7 +201,7 @@ def list_matches(
         text(
             """
             SELECT m.id, m.posting_id, m.match_score, m.priority_score, m.hard_failures,
-                   m.reasons, m.score_breakdown, m.status,
+                   m.reasons, m.score_breakdown, m.direction_scores, m.status,
                    p.company_name, p.title, p.location, p.department, p.is_campus,
                    p.org_level, p.apply_url, p.first_seen_at, p.raw->'directions' AS directions
             FROM job_matches m
@@ -247,6 +247,9 @@ def list_matches(
                 if isinstance(r["directions"], str) else (r["directions"] or []),
                 "hard_failures": r["hard_failures"] or [],
                 "score_breakdown": r["score_breakdown"] or {},
+                "direction_scores": loads_json(r["direction_scores"])
+                if isinstance(r["direction_scores"], str)
+                else (r["direction_scores"] or []),
                 "reasons": r["reasons"] or [],
                 "status": r["status"],
                 "company_name": r["company_name"],

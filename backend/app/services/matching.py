@@ -209,7 +209,35 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
         f"硬性事實：{profile['hard_facts']}\n\n"
         f"JD：{jd}"
     )
-    scored = chat_json(_SCORE_SYSTEM, prompt)
+
+    # ── 崗位方向：逐方向分別評分（投遞仍一崗一投；崗位級分數取最高方向）──
+    raw = posting.get("raw") or {}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            raw = {}
+    directions = [d for d in (raw.get("directions") or []) if d]
+    direction_scores: list[dict] = []
+    if len(directions) > 1:
+        for d in directions:
+            try:
+                s = chat_json(_SCORE_SYSTEM, prompt + f"\n（本崗位方向：{d}。請只針對該方向評分。）")
+                direction_scores.append({
+                    "direction": d,
+                    "match_score": min(max(int(s["match_score"]), 50), 100),
+                    "reasons": s.get("reasons") or [],
+                })
+            except Exception:  # noqa: BLE001
+                logger.warning("方向評分失敗 direction=%s posting=%s", d, posting_id)
+        if direction_scores:
+            best = max(direction_scores, key=lambda x: x["match_score"])
+            scored = {"match_score": best["match_score"], "breakdown": {},
+                      "reasons": best["reasons"] + [f"（按最匹配方向「{best['direction']}」計）"]}
+        else:
+            scored = chat_json(_SCORE_SYSTEM, prompt)
+    else:
+        scored = chat_json(_SCORE_SYSTEM, prompt)
 
     # ── 貼合度 = 純個人條件匹配（LLM），不做任何偏好加減 ──
     fit_score = min(max(int(scored["match_score"]), 50), 100)
@@ -231,12 +259,14 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
             """
             INSERT INTO job_matches
               (user_id, posting_id, profile_version_id, match_score, priority_score,
-               score_breakdown, reasons, status)
-            VALUES (:uid, :pid, :pv, :score, :prio, CAST(:bd AS jsonb), CAST(:reasons AS jsonb), 'new')
+               score_breakdown, reasons, direction_scores, status)
+            VALUES (:uid, :pid, :pv, :score, :prio, CAST(:bd AS jsonb), CAST(:reasons AS jsonb),
+                    CAST(:ds AS jsonb), 'new')
             ON CONFLICT (user_id, posting_id) DO UPDATE
               SET match_score=EXCLUDED.match_score, priority_score=EXCLUDED.priority_score,
                   score_breakdown=EXCLUDED.score_breakdown,
-                  reasons=EXCLUDED.reasons, hard_failures=NULL,
+                  reasons=EXCLUDED.reasons, direction_scores=EXCLUDED.direction_scores,
+                  hard_failures=NULL,
                   status=CASE WHEN job_matches.status IN ('applied','applying') THEN job_matches.status ELSE 'new' END,
                   updated_at=now()
             """
@@ -249,11 +279,13 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
             "prio": priority,
             "bd": j(breakdown),
             "reasons": j(scored.get("reasons") or []),
+            "ds": j(direction_scores or []),
         },
     )
     db.commit()
     return {"match_score": fit_score, "priority_score": priority, "hard_failures": [],
-            "status": "new", "location_adjust": loc_adj}
+            "status": "new", "location_adjust": loc_adj,
+            "direction_scores": direction_scores}
 
 
 def _org_adjust(db: Session, user_id: str, org_level: str) -> int:
