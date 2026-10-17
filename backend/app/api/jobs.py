@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
+from app.core.jsonutil import j
 from app.db import get_db
 
 logger = logging.getLogger(__name__)
@@ -134,15 +135,55 @@ def run_collect(user: CurrentUser, db: DB, payload: CollectRequest, background_t
     company = (payload.company or "").strip()
 
     def _run() -> None:
+        import datetime as _dt
+
         from app.db import SessionLocal
 
         s = SessionLocal()
+        s.execute(
+            text(
+                "INSERT INTO user_settings (user_id, collect_state) VALUES (:u, CAST(:st AS jsonb)) "
+                "ON CONFLICT (user_id) DO UPDATE SET collect_state=CAST(:st AS jsonb), updated_at=now()"
+            ),
+            {"u": uid, "st": j({"running": True, "finished_at": None, "report": None})},
+        )
+        s.commit()
         try:
-            collect_for_user(s, uid, company_name=company or None)
+            report = collect_for_user(s, uid, company_name=company or None)
+            s.execute(
+                text(
+                    "UPDATE user_settings SET collect_state=CAST(:st AS jsonb), updated_at=now() "
+                    "WHERE user_id=:u"
+                ),
+                {"u": uid, "st": j({
+                    "running": False,
+                    "finished_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+                    "report": {k: report.get(k) for k in ("new", "updated", "matched", "errors", "collected")},
+                })},
+            )
+            s.commit()
         except Exception:  # noqa: BLE001
             logger.exception("後台採集失敗 user=%s", uid)
+            s.execute(
+                text(
+                    "UPDATE user_settings SET collect_state=CAST(:st AS jsonb), updated_at=now() "
+                    "WHERE user_id=:u"
+                ),
+                {"u": uid, "st": j({"running": False, "finished_at": None, "report": {"errors": 1}})},
+            )
+            s.commit()
         finally:
             s.close()
 
     background_tasks.add_task(_run)
     return {"started": True, "note": ("僅採集該公司" if company else "全量採集") + "，後台執行中"}
+
+
+@router.get("/collect-status")
+def collect_status(user: CurrentUser, db: DB) -> dict:
+    """採集進度：前台輪詢此端點，running=false 且 finished_at 有值即完成。"""
+    row = db.execute(
+        text("SELECT collect_state FROM user_settings WHERE user_id=:u"),
+        {"u": user["id"]},
+    ).mappings().first()
+    return dict(row["collect_state"] or {}) if row and row["collect_state"] else {"running": False}

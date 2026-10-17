@@ -62,18 +62,43 @@ export default function Jobs() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [limit, offset]);
 
+  const [collectOk, setCollectOk] = useState(false);
+
   async function collect(onlyCompany: boolean) {
     setBusy(true);
+    setCollectOk(false);
     setMsg(onlyCompany ? `正在後台採集「${company}」…` : "正在後台採集你的關注公司…");
     try {
       await api("/api/jobs/collect/run", {
         method: "POST",
         body: JSON.stringify({ company: onlyCompany ? company || null : null }),
       });
-      setMsg("已觸發後台採集，稍後點「搜索」查看結果");
+      // 輪詢採集進度，完成後綠色提示
+      let tries = 0;
+      const timer = window.setInterval(async () => {
+        tries += 1;
+        try {
+          const st = await api<{ running: boolean; finished_at: string | null; report: Record<string, number> | null }>(
+            "/api/jobs/collect-status",
+          );
+          if (!st.running && st.finished_at) {
+            window.clearInterval(timer);
+            const rp = st.report ?? {};
+            setCollectOk(true);
+            setMsg(`✅ 採集完成：新增 ${rp.new ?? 0}，更新 ${rp.updated ?? 0}，匹配 ${rp.matched ?? 0}，錯誤 ${rp.errors ?? 0}。點「刷新」查看最新崗位。`);
+            setBusy(false);
+          } else if (tries > 60) {
+            window.clearInterval(timer);
+            setMsg("採集仍在後台進行，稍後點「刷新」查看");
+            setBusy(false);
+          }
+        } catch {
+          window.clearInterval(timer);
+          setBusy(false);
+        }
+      }, 8000);
     } catch (e) {
       setMsg(`採集失敗: ${(e as Error).message}`);
-    } finally {
       setBusy(false);
     }
   }
@@ -125,7 +150,11 @@ export default function Jobs() {
             <button className="ghost" disabled={busy} onClick={() => void collect(!!company)}>
               {company ? `採集「${company}」` : t("collectNow")}
             </button>
+            <button className="ghost" onClick={() => { void load(); setCollectOk(false); setMsg("已刷新"); }}>
+              🔃 刷新
+            </button>
           </div>
+          <p className={collectOk ? "notice success" : "notice"}>{msg}</p>
           <p className="muted">每日 02:00 自動採集；也可手動觸發（後台執行）。點擊行查看詳情。</p>
           <table>
             <thead>
@@ -212,7 +241,6 @@ export default function Jobs() {
               </div>
             </div>
           )}
-          <p className="notice">{msg}</p>
         </div>
       </main>
     </div>
