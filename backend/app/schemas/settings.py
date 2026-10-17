@@ -23,6 +23,7 @@ class SettingsUpdate(BaseModel):
     login_expiry_notify: bool | None = None
     preferred_locations: list[str] | None = None
     location_weight: int | None = Field(default=None, ge=0, le=25)
+    org_preference: Literal["headquarter", "branch", "both"] | None = None
 
     @field_validator("timezone")
     @classmethod

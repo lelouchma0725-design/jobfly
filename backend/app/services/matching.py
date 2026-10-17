@@ -144,22 +144,31 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
     )
     scored = chat_json(_SCORE_SYSTEM, prompt)
 
-    # 地區權重調整（期望城市加權，非期望城市適度降權）+ 校招職級適配
-    adjustment = _location_adjust(db, user_id, posting["location"]) + campus_adjust
-    final_score = int(scored["match_score"]) + adjustment
-    final_score = min(max(final_score, 50), 100)
+    # ── 貼合度 = 純個人條件匹配（LLM），不做任何偏好加減 ──
+    fit_score = min(max(int(scored["match_score"]), 50), 100)
+
+    # ── 投遞優先級 = 貼合度 + 偏好加權（地區/校招職級/總部分支），只用於排序與投遞選擇 ──
+    loc_adj = _location_adjust(db, user_id, posting["location"])
+    org_adj = _org_adjust(db, user_id, posting.get("org_level") or "unknown")
+    priority = min(max(fit_score + loc_adj + campus_adjust + org_adj, 50), 100)
     breakdown = scored.get("breakdown") or {}
-    breakdown["location_adjust"] = adjustment - campus_adjust
-    breakdown["campus_adjust"] = campus_adjust
+    breakdown.update({
+        "fit_base": fit_score,
+        "location_adjust": loc_adj,
+        "campus_adjust": campus_adjust,
+        "org_adjust": org_adj,
+    })
 
     db.execute(
         text(
             """
             INSERT INTO job_matches
-              (user_id, posting_id, profile_version_id, match_score, score_breakdown, reasons, status)
-            VALUES (:uid, :pid, :pv, :score, CAST(:bd AS jsonb), CAST(:reasons AS jsonb), 'new')
+              (user_id, posting_id, profile_version_id, match_score, priority_score,
+               score_breakdown, reasons, status)
+            VALUES (:uid, :pid, :pv, :score, :prio, CAST(:bd AS jsonb), CAST(:reasons AS jsonb), 'new')
             ON CONFLICT (user_id, posting_id) DO UPDATE
-              SET match_score=EXCLUDED.match_score, score_breakdown=EXCLUDED.score_breakdown,
+              SET match_score=EXCLUDED.match_score, priority_score=EXCLUDED.priority_score,
+                  score_breakdown=EXCLUDED.score_breakdown,
                   reasons=EXCLUDED.reasons, hard_failures=NULL,
                   status=CASE WHEN job_matches.status IN ('applied','applying') THEN job_matches.status ELSE 'new' END,
                   updated_at=now()
@@ -169,14 +178,29 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
             "uid": user_id,
             "pid": posting_id,
             "pv": profile["id"],
-            "score": final_score,
+            "score": fit_score,
+            "prio": priority,
             "bd": j(breakdown),
             "reasons": j(scored.get("reasons") or []),
         },
     )
     db.commit()
-    return {"match_score": final_score, "hard_failures": [], "status": "new",
-            "location_adjust": adjustment}
+    return {"match_score": fit_score, "priority_score": priority, "hard_failures": [],
+            "status": "new", "location_adjust": loc_adj}
+
+
+def _org_adjust(db: Session, user_id: str, org_level: str) -> int:
+    """總部/分支偏好加權：偏好總部時分支 -8；偏好分支時總部 -5；一視同仁 0。"""
+    st = db.execute(
+        text("SELECT org_preference FROM user_settings WHERE user_id=:u"),
+        {"u": user_id},
+    ).mappings().first()
+    pref = (st["org_preference"] if st else "both") or "both"
+    if pref == "headquarter" and org_level == "branch":
+        return -8
+    if pref == "branch" and org_level == "headquarter":
+        return -5
+    return 0
 
 
 def _is_campus_posting(posting: dict) -> bool:
