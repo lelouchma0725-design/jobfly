@@ -19,6 +19,18 @@ from app.core.jsonutil import j
 from app.core.llm import chat_with_tools
 from app.db import get_db
 
+# 繁→簡 對照（成對排列，索引偶數為繁、奇數為簡）
+_T2S_PAIRS = (
+    "產产品品經经理理開开发发發发經经验验數数據据應应屆届培培訓训員员務务職职證证聯联网网點点類类銀银資资讯讯質质動动範范組组织织級级實实习习業业專专门门間间時时机机構构規规畫画計计設设銷销場场營营錢钱術术歷历係系國国體体單单與与讀读種种長长風风控控優优權权廣广东东亞亚險险斷断檔档待待校校園园崗岗簡简選选擇择請请填填寫写郵邮箱箱畢毕學学戶户籍籍城城市市農农村村金金融融練练員员續续務务業业個个國国際际證证務务處处體体係系號号臺台灣湾香香港港滬沪深深圳圳京京穗穗"
+)
+
+
+def _t2s(text: str) -> str:
+    """繁體轉簡體（成對字符串，容錯任何空格/標點）。"""
+    pairs = [c for c in _T2S_PAIRS if not c.isspace()]
+    m = {pairs[i]: pairs[i + 1] for i in range(0, len(pairs) - 1, 2)}
+    return "".join(m.get(ch, ch) for ch in text)
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -193,11 +205,7 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
         if not q and not company:
             return {"error": "請提供 keyword 或 company"}
         # 繁→簡 + 分詞（按空白/特殊符號切）
-        T2S_TABLE = str.maketrans(
-        "產品經理開發經驗數據應屆培訓員務職驗證聯網點類銀資訊質動發開範組織級務實習業專門間時機構規畫設計銷市場營銷務錢術歷係國體單與讀種長務風控優權廣東亞",  # noqa: E501
-        "产品经理开发经验数据应届培训业务职验证联网点类银资讯质动发开范组织级务实习业专门间时机构规划设计销市场营销业务钱术历系国体单与读种长务风控优权广东亚")
-
-        q = q.translate(t2s)
+        q = _t2s(q)
         tokens = [t for t in q.replace("，", " ").replace("/", " ").split() if t]
         conds, params = [], {"u": user_id, "co": company}
         for i, tok in enumerate(tokens[:6]):
@@ -222,7 +230,7 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
             rows = db.execute(text(
                 f"""
                 SELECT p.company_name, p.title, p.location, p.is_campus,
-                       m.match_score, m.status
+                       m.match_score, m.status, p.raw->>'tab' AS tab
                 FROM job_postings p
                 LEFT JOIN job_matches m ON m.posting_id = p.id AND m.user_id = :u
                 WHERE p.is_active = true AND {or_where}
@@ -244,11 +252,7 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
         """對指定崗位即時評分（忽略緩存，用當前畫像現場重算）。"""
         q = str(args.get("keyword") or "").strip()
         company = str(args.get("company") or "").strip()
-        T2S_TABLE = str.maketrans(
-        "產品經理開發經驗數據應屆培訓員務職驗證聯網點類銀資訊質動發開範組織級務實習業專門間時機構規畫設計銷市場營銷務錢術歷係國體單與讀種長務風控優權廣東亞",  # noqa: E501
-        "产品经理开发经验数据应届培训业务职验证联网点类银资讯质动发开范组织级务实习业专门间时机构规划设计销市场营销业务钱术历系国体单与读种长务风控优权广东亚")
-
-        q = q.translate(t2s)
+        q = _t2s(q)
         tokens = [t for t in q.replace("，", " ").replace("/", " ").split() if t]
         conds, params = [], {"co": company}
         for i, tok in enumerate(tokens[:6]):
