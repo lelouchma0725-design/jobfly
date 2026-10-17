@@ -109,24 +109,27 @@ def list_companies(user: CurrentUser, db: DB) -> list[dict]:
 
 
 def rematch_company(db: Session, user_id: str, company: str, batch: int = 50) -> dict:
-    """按公司重新匹配：該公司全部崗位（補缺失優先）。"""
-    rows = db.execute(
-        text(
-            """
-            SELECT p.id FROM job_postings p
-            WHERE p.is_active = true AND p.company_name ILIKE '%'||:co||'%'
-            ORDER BY p.first_seen_at DESC LIMIT :n
-            """
-        ),
-        {"co": company, "n": batch * 4},
-    ).mappings().all()
+    """按公司重新匹配：分批循環直到該公司全部崗位重算。"""
     total = 0
-    for r in rows:
-        try:
-            score_posting(db, user_id, str(r["id"]))
-            total += 1
-        except Exception:  # noqa: BLE001
-            logger.exception("按公司匹配失敗 user=%s posting=%s", user_id, r["id"])
+    for _ in range(20):  # 每輪 50 個，最多 1000 個/公司
+        rows = db.execute(
+            text(
+                """
+                SELECT p.id FROM job_postings p
+                WHERE p.is_active = true AND p.company_name ILIKE '%'||:co||'%'
+                ORDER BY p.first_seen_at DESC LIMIT :n OFFSET :off
+                """
+            ),
+            {"co": company, "n": batch, "off": total},
+        ).mappings().all()
+        if not rows:
+            break
+        for r in rows:
+            try:
+                score_posting(db, user_id, str(r["id"]))
+                total += 1
+            except Exception:  # noqa: BLE001
+                logger.exception("按公司匹配失敗 user=%s posting=%s", user_id, r["id"])
     return {"scored": total, "company": company, "remaining_missing": 0, "total_matches": total}
 
 
