@@ -159,8 +159,10 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
                 "③ 校招職級適配：有工作經歷者投校招不攔截但降權 15 分（職級不適配）",
                 f"④ 貼合度閾值：{st['match_threshold'] if st else 70}%",
                 f"⑤ 投遞模式：{st['auto_apply_mode'] if st else 'threshold'}",
-                f"⑥ 期望地區加權：{st['preferred_locations'] or '未設置'}，命中 +{st['location_weight'] if st else 10} 分",
-                f"⑦ 速率限制：{st['apply_rate_limit_min'] if st else 5} 分鐘/次",
+                f"⑥ 期望地區加權：{st['preferred_locations'] or '未設置'}，命中 +{st['location_weight'] if st else 10} 分（計入優先級，不影響貼合度）",
+                f"⑦ 總部/分支偏好：{st['org_preference'] if st else 'both'}（計入優先級）",
+                f"⑧ 速率限制：{st['apply_rate_limit_min'] if st else 5} 分鐘/次",
+                "說明：貼合度=純個人條件匹配；優先級=貼合度+地區/校招職級/總部分支偏好加權，投遞隊列按優先級選崗位",
             ],
         }
 
@@ -186,6 +188,8 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
             fields["auto_apply_mode"] = args["auto_apply_mode"]
         if "campus_preference" in args and args["campus_preference"] in ("campus", "society", "both"):
             fields["campus_preference"] = args["campus_preference"]
+        if "org_preference" in args and args["org_preference"] in ("headquarter", "branch", "both"):
+            fields["org_preference"] = args["org_preference"]
         if not fields:
             return {"完成": False, "原因": "沒有可更新的設置"}
         sets = ", ".join(f"{k}=:{k}" for k in fields)
@@ -376,6 +380,8 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
             "parameters": {"type": "object", "properties": {
                 "match_threshold": {"type": "integer"},
                 "auto_apply_mode": {"type": "string", "enum": ["off", "threshold", "all"]},
+                "org_preference": {"type": "string", "enum": ["headquarter", "branch", "both"],
+                                   "description": "總部/分支偏好：headquarter=總部優先，branch=分支優先，both=一視同仁"},
             }},
         }},
         {"type": "function", "function": {

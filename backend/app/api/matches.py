@@ -5,6 +5,7 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -106,6 +107,28 @@ def list_companies(user: CurrentUser, db: DB) -> list[dict]:
     ]
 
 
+def rematch_company(db: Session, user_id: str, company: str, batch: int = 50) -> dict:
+    """按公司重新匹配：該公司全部崗位（補缺失優先）。"""
+    rows = db.execute(
+        text(
+            """
+            SELECT p.id FROM job_postings p
+            WHERE p.is_active = true AND p.company_name ILIKE '%'||:co||'%'
+            ORDER BY p.first_seen_at DESC LIMIT :n
+            """
+        ),
+        {"co": company, "n": batch * 4},
+    ).mappings().all()
+    total = 0
+    for r in rows:
+        try:
+            score_posting(db, user_id, str(r["id"]))
+            total += 1
+        except Exception:  # noqa: BLE001
+            logger.exception("按公司匹配失敗 user=%s posting=%s", user_id, r["id"])
+    return {"scored": total, "company": company, "remaining_missing": 0, "total_matches": total}
+
+
 def rematch_full(db: Session, user_id: str, max_rounds: int = 30, batch: int = 30) -> dict:
     """分批多輪直到全量補評完成。返回最終進度。"""
     res = {"scored": 0, "remaining_missing": -1, "total_matches": 0}
@@ -116,17 +139,25 @@ def rematch_full(db: Session, user_id: str, max_rounds: int = 30, batch: int = 3
     return res
 
 
+class RematchRequest(BaseModel):
+    company: str | None = None
+
+
 @router.post("/rematch", status_code=202)
-def rematch(user: CurrentUser, db: DB, background_tasks: BackgroundTasks) -> dict:
-    """重新匹配：分批多輪直到全量（補評缺失 + 重算最舊），後台執行。"""
+def rematch(user: CurrentUser, db: DB, payload: RematchRequest, background_tasks: BackgroundTasks) -> dict:
+    """重新匹配：全量或按公司（補評缺失 + 重算），後台執行。"""
     uid = user["id"]
+    company = (payload.company or "").strip()
 
     def _run() -> None:
         from app.db import SessionLocal
 
         s = SessionLocal()
         try:
-            res = rematch_full(s, uid)
+            if company:
+                res = rematch_company(s, uid, company)
+            else:
+                res = rematch_full(s, uid)
             logger.info("重新匹配完成 user=%s %s", uid, res)
         except Exception:  # noqa: BLE001
             logger.exception("重新匹配失敗 user=%s", uid)
@@ -134,7 +165,7 @@ def rematch(user: CurrentUser, db: DB, background_tasks: BackgroundTasks) -> dic
             s.close()
 
     background_tasks.add_task(_run)
-    return {"started": True, "note": "重新匹配在後台分批執行，全部完成前可反覆觸發；完成後點「刷新」查看"}
+    return {"started": True, "note": ("僅重新匹配該公司" if company else "全量重新匹配") + "，後台執行中"}
 
 
 @router.get("/rematch-status")
@@ -159,22 +190,30 @@ def list_matches(
     user: CurrentUser, db: DB, status: str | None = None,
     company: str | None = None,
     limit: int = 20, offset: int = 0,
+    campus: str | None = None, org: str | None = None,
 ) -> dict:
     limit = min(max(limit, 1), 100)
     rows = db.execute(
         text(
             """
-            SELECT m.id, m.posting_id, m.match_score, m.hard_failures, m.reasons, m.status,
-                   p.company_name, p.title, p.location, p.apply_url, p.first_seen_at
+            SELECT m.id, m.posting_id, m.match_score, m.priority_score, m.hard_failures,
+                   m.reasons, m.status,
+                   p.company_name, p.title, p.location, p.department, p.is_campus,
+                   p.org_level, p.apply_url, p.first_seen_at
             FROM job_matches m
             JOIN job_postings p ON p.id = m.posting_id
             WHERE m.user_id = :uid AND (CAST(:st AS text) IS NULL OR CAST(m.status AS text) = :st)
               AND (CAST(:co AS text) IS NULL OR p.company_name ILIKE '%'||:co||'%')
-            ORDER BY m.match_score DESC NULLS LAST, p.first_seen_at DESC
+              AND (CAST(:ca AS text) IS NULL OR (CAST(:ca AS text)='campus' AND p.is_campus)
+                   OR (CAST(:ca AS text)='society' AND NOT p.is_campus))
+              AND (CAST(:og AS text) IS NULL OR p.org_level = :og)
+            ORDER BY m.priority_score DESC NULLS LAST, m.match_score DESC NULLS LAST,
+                     p.first_seen_at DESC
             LIMIT :lim OFFSET :off
             """
         ),
-        {"uid": user["id"], "st": status, "co": company, "lim": limit, "off": offset},
+        {"uid": user["id"], "st": status, "co": company, "ca": campus, "og": org,
+         "lim": limit, "off": offset},
     ).mappings().all()
     total = db.execute(
         text(
@@ -183,9 +222,12 @@ def list_matches(
             JOIN job_postings p ON p.id = m.posting_id
             WHERE m.user_id = :uid AND (CAST(:st AS text) IS NULL OR CAST(m.status AS text) = :st)
               AND (CAST(:co AS text) IS NULL OR p.company_name ILIKE '%'||:co||'%')
+              AND (CAST(:ca AS text) IS NULL OR (CAST(:ca AS text)='campus' AND p.is_campus)
+                   OR (CAST(:ca AS text)='society' AND NOT p.is_campus))
+              AND (CAST(:og AS text) IS NULL OR p.org_level = :og)
             """
         ),
-        {"uid": user["id"], "st": status, "co": company},
+        {"uid": user["id"], "st": status, "co": company, "ca": campus, "og": org},
     ).mappings().one()["n"]
     return {
         "items": [
@@ -193,6 +235,10 @@ def list_matches(
                 "id": str(r["id"]),
                 "posting_id": str(r["posting_id"]),
                 "match_score": r["match_score"],
+                "priority_score": r["priority_score"],
+                "is_campus": r["is_campus"],
+                "org_level": r["org_level"],
+                "department": r["department"],
                 "hard_failures": r["hard_failures"] or [],
                 "reasons": r["reasons"] or [],
                 "status": r["status"],

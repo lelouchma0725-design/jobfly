@@ -14,6 +14,7 @@ type Settings = {
   preferred_locations: string[] | null;
   location_weight: number;
   campus_preference: "campus" | "society" | "both";
+  org_preference: "headquarter" | "branch" | "both";
 };
 
 const DEFAULTS: Settings = {
@@ -29,6 +30,7 @@ const DEFAULTS: Settings = {
   preferred_locations: [],
   location_weight: 10,
   campus_preference: "both",
+  org_preference: "both",
 };
 
 type PushChannels = Record<string, string>;
@@ -151,6 +153,25 @@ export default function Settings() {
                 name="campus_preference"
                 checked={s.campus_preference === value}
                 onChange={() => save({ campus_preference: value })}
+              />
+              {desc}
+            </label>
+          ))}
+
+          <h3>總部/分支偏好（計入優先級，不影響貼合度）</h3>
+          {(
+            [
+              ["headquarter", "總部優先（分支機構崗位優先級 -8）"],
+              ["branch", "分支機構優先（總部崗位優先級 -5）"],
+              ["both", "一視同仁（推薦）"],
+            ] as const
+          ).map(([value, desc]) => (
+            <label className="row" key={value}>
+              <input
+                type="radio"
+                name="org_preference"
+                checked={s.org_preference === value}
+                onChange={() => save({ org_preference: value })}
               />
               {desc}
             </label>
