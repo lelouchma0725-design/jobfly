@@ -94,6 +94,16 @@ def list_jobs(
     }
 
 
+@router.get("/collect-status")
+def collect_status(user: CurrentUser, db: DB) -> dict:
+    """採集進度：前台輪詢此端點，running=false 且 finished_at 有值即完成。"""
+    row = db.execute(
+        text("SELECT collect_state FROM user_settings WHERE user_id=:u"),
+        {"u": user["id"]},
+    ).mappings().first()
+    return dict(row["collect_state"] or {}) if row and row["collect_state"] else {"running": False}
+
+
 @router.get("/{posting_id}")
 def get_job(user: CurrentUser, db: DB, posting_id: str) -> dict:
     row = db.execute(
