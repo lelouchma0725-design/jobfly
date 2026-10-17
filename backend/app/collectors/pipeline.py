@@ -49,6 +49,25 @@ def _health(db: Session, adapter: str, ok: bool, error: str | None, duration_ms:
 CAMPUS_TITLE_HINTS = ("校招", "校园", "应届", "應屆", "管培生", "培训生", "培訓生", "秋招", "春招", "2027届", "2027屆")
 
 
+def _org_level(p: base.JobPosting) -> str:
+    """總部/分支機構標記：raw deptype → tab 標籤 → 標題啟發式。"""
+    raw = p.raw or {}
+    dt = str(raw.get("deptype") or "").lower()
+    if dt == "headquarter":
+        return "headquarter"
+    if dt == "branch":
+        return "branch"
+    tab = str(raw.get("tab") or "")
+    if "分支" in tab or "branch" in tab.lower():
+        return "branch"
+    if "總部" in tab or "headquarter" in tab.lower():
+        return "headquarter"
+    title = p.title or ""
+    if any(h in title for h in ("分公司", "营业部", "營業部", "支行")):
+        return "branch"
+    return "unknown"
+
+
 def _is_campus_posting(p: base.JobPosting) -> bool:
     if p.raw.get("is_campus"):
         return True
@@ -79,6 +98,7 @@ def store_postings(db: Session, postings: list[base.JobPosting]) -> dict:
                       salary_range=COALESCE(CAST(:sal AS jsonb), salary_range),
                       posted_at=COALESCE(:posted, posted_at),
                       is_campus=:is_campus,
+                      org_level=:org_level,
                       company_name=:cname,
                       last_seen_at=now(), is_active=true, raw=CAST(:raw AS jsonb)
                     WHERE id=:id
@@ -90,6 +110,7 @@ def store_postings(db: Session, postings: list[base.JobPosting]) -> dict:
                     "sal": json.dumps(p.salary_range, ensure_ascii=False) if p.salary_range else None,
                     "posted": p.posted_at, "cname": p.company_name,
                     "is_campus": _is_campus_posting(p),
+                    "org_level": _org_level(p),
                     "raw": json.dumps(p.raw, ensure_ascii=False),
                 },
             )
@@ -100,9 +121,11 @@ def store_postings(db: Session, postings: list[base.JobPosting]) -> dict:
                     """
                     INSERT INTO job_postings
                       (source, external_id, company_name, title, location, department,
-                       description_text, apply_url, salary_range, posted_at, is_campus, raw)
+                       description_text, apply_url, salary_range, posted_at, is_campus,
+                       org_level, raw)
                     VALUES (:s, :e, :cname, :t, :loc, :dep, :desc, :url,
-                            CAST(:sal AS jsonb), :posted, :is_campus, CAST(:raw AS jsonb))
+                            CAST(:sal AS jsonb), :posted, :is_campus, :org_level,
+                            CAST(:raw AS jsonb))
                     """
                 ),
                 {
@@ -112,6 +135,7 @@ def store_postings(db: Session, postings: list[base.JobPosting]) -> dict:
                     "sal": json.dumps(p.salary_range, ensure_ascii=False) if p.salary_range else None,
                     "posted": p.posted_at,
                     "is_campus": _is_campus_posting(p),
+                    "org_level": _org_level(p),
                     "raw": json.dumps(p.raw, ensure_ascii=False),
                 },
             )
