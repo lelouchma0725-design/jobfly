@@ -13,6 +13,7 @@ type Match = {
   department: string | null;
   hard_failures: unknown[];
   reasons: string[];
+  score_breakdown: Record<string, number | string>;
   status: string;
   company_name: string;
   title: string;
@@ -37,6 +38,13 @@ const ORG_TEXT: Record<string, string> = {
   unknown: "—",
 };
 
+const BD_TEXT: Record<string, string> = {
+  fit_base: "個人條件匹配（貼合度）",
+  location_adjust: "地區偏好加權",
+  campus_adjust: "校招職級適配",
+  org_adjust: "總部/分支偏好",
+};
+
 export default function Matches() {
   const { t } = useT();
   const [items, setItems] = useState<Match[]>([]);
@@ -44,10 +52,10 @@ export default function Matches() {
   const [status, setStatus] = useState("");
   const [campus, setCampus] = useState("");
   const [org, setOrg] = useState("");
-  // 輸入框與實際查詢條件分離：只有點「查詢」才觸發
   const [companyInput, setCompanyInput] = useState("");
   const [company, setCompany] = useState("");
   const [msg, setMsg] = useState("");
+  const [expanded, setExpanded] = useState<string | null>(null);
   const [limit, setLimit] = useState(20);
   const [offset, setOffset] = useState(0);
 
@@ -167,8 +175,9 @@ export default function Matches() {
               🔄 {company ? `重新匹配「${company}」` : "全量重新匹配"}
             </button>
           </div>
+          <p className="notice">{msg}</p>
           <p className="muted">
-            貼合度 = 純個人條件匹配；優先級 = 貼合度 + 地區/校招職級/總部分支偏好加權（投遞按優先級選崗位）。
+            點擊任意行查看「貼合度分析」（個人條件匹配 + 各項偏好加權 + 匹配理由）。
             {company && " 篩選公司時「重新匹配」只匹配該公司（省時）。"}
           </p>
           <table>
@@ -178,34 +187,81 @@ export default function Matches() {
                 <th>{t("jobTitle")}</th>
                 <th>類型</th>
                 <th>部門</th>
-                <th>{t("fitScore")}</th>
                 <th>優先級</th>
                 <th>{t("status")}</th>
-                <th></th>
               </tr>
             </thead>
             <tbody>
               {items.map((m) => (
-                <tr key={m.id}>
-                  <td>{m.company_name}</td>
-                  <td>{m.title}</td>
-                  <td>
-                    {m.is_campus ? "校招" : "社招"} · {ORG_TEXT[m.org_level] ?? m.org_level}
-                  </td>
-                  <td className="muted">{m.department ?? "—"}</td>
-                  <td>
-                    <b>{m.match_score != null ? `${m.match_score}%` : "不符"}</b>
-                  </td>
-                  <td>{m.priority_score != null ? `${m.priority_score}%` : "—"}</td>
-                  <td>{STATUS_TEXT[m.status] ?? m.status}</td>
-                  <td>
-                    {m.apply_url && (
-                      <a href={m.apply_url} target="_blank" rel="noreferrer">
-                        {t("openApply")}
-                      </a>
-                    )}
-                  </td>
-                </tr>
+                <>
+                  <tr
+                    key={m.id}
+                    onClick={() => setExpanded(expanded === m.id ? null : m.id)}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <td>{m.company_name}</td>
+                    <td>{m.title}</td>
+                    <td>
+                      {m.is_campus ? "校招" : "社招"} · {ORG_TEXT[m.org_level] ?? m.org_level}
+                    </td>
+                    <td className="muted">{m.department ?? "—"}</td>
+                    <td>
+                      <b>{m.priority_score != null ? `${m.priority_score}%` : "—"}</b>
+                    </td>
+                    <td>{STATUS_TEXT[m.status] ?? m.status}</td>
+                  </tr>
+                  {expanded === m.id && (
+                    <tr key={m.id + "-detail"}>
+                      <td colSpan={6} className="match-detail">
+                        <div className="row wrap" style={{ gap: 18 }}>
+                          <div>
+                            <h4>貼合度分析</h4>
+                            <table className="mini">
+                              <tbody>
+                                <tr>
+                                  <td className="muted">貼合度（個人條件）</td>
+                                  <td>
+                                    <b>{m.match_score != null ? `${m.match_score}%` : "硬性不符"}</b>
+                                  </td>
+                                </tr>
+                                {Object.entries(m.score_breakdown ?? {})
+                                  .filter(([k]) => k !== "fit_base")
+                                  .map(([k, v]) => (
+                                    <tr key={k}>
+                                      <td className="muted">{BD_TEXT[k] ?? k}</td>
+                                      <td>
+                                        {Number(v) > 0 ? `+${v}` : `${v}`} 分
+                                      </td>
+                                    </tr>
+                                  ))}
+                                <tr>
+                                  <td className="muted">優先級（排序用）</td>
+                                  <td>
+                                    <b>{m.priority_score != null ? `${m.priority_score}%` : "—"}</b>
+                                  </td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                          <div style={{ flex: 1, minWidth: 240 }}>
+                            <h4>匹配理由</h4>
+                            <ul>
+                              {(m.reasons ?? []).map((r, i) => (
+                                <li key={i}>{r}</li>
+                              ))}
+                              {!(m.reasons ?? []).length && <li className="muted">—</li>}
+                            </ul>
+                            {m.apply_url && (
+                              <a href={m.apply_url} target="_blank" rel="noreferrer">
+                                {t("openApply")}
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
               ))}
             </tbody>
           </table>
@@ -219,7 +275,6 @@ export default function Matches() {
               setOffset(0);
             }}
           />
-          <p className="notice">{msg}</p>
         </div>
       </main>
     </div>

@@ -46,6 +46,7 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage]
+    conversation_id: str | None = None
 
 
 SYSTEM_PROMPT = """
@@ -53,10 +54,14 @@ SYSTEM_PROMPT = """
 規則：
 1. 用繁體中文、口語化、簡潔（一般 2-5 句）回覆，適當用列表。
 2. 主動使用工具獲取真實數據，不要憑空編造；工具返回的就是事實。
-3. 用戶想了解狀態/執行操作時，先調工具再總結。
-4. 需要用戶操作時給出明確的一步步指引（例如去哪個頁面點什麼）。
-5. 首次使用的用戶（沒有畫像/簡歷/關注公司）主動引導：上傳簡歷→生成畫像→添加公司→開啟自動投遞。
-6. 不要洩露任何密碼、token 等敏感信息。
+3. 用戶查詢具體崗位/職位名稱（例如「XX公司的XX崗位」「幫我找XX職位」）時，**必須調用 find_job 工具**，
+   用頓號/逗號分隔的多個職位名要逐一調用 find_job 查詢；不要用 list_matches 代替、不要直接說沒有。
+   find_job 查不到時，先調 run_collect 採集該公司最新崗位再重新查一次。
+4. 用戶問某個崗位的貼合度時，必須調用 score_job（現場重算，保證數據最新）。
+5. 用戶想了解狀態/執行操作時，先調工具再總結。
+6. 需要用戶操作時給出明確的一步步指引（例如去哪個頁面點什麼）。
+7. 首次使用的用戶（沒有畫像/簡歷/關注公司）主動引導：上傳簡歷→生成畫像→添加公司→開啟自動投遞。
+8. 不要洩露任何密碼、token 等敏感信息。
 """
 
 
@@ -462,4 +467,74 @@ def chat(user: CurrentUser, db: DB, payload: ChatRequest) -> dict:
     messages = [{"role": m.role, "content": m.content} for m in payload.messages[-10:]]
     tools, executor = _build_tools(user["id"], db)
     reply = chat_with_tools(SYSTEM_PROMPT, messages, tools, executor)
-    return {"reply": reply}
+    # 問答歷史持久化（存儲不增加 API 成本；恢復會話才會把歷史放回上下文）
+    full = messages + [{"role": "assistant", "content": reply}]
+    conv_id = payload.conversation_id
+    if conv_id:
+        exists = db.execute(
+            text("SELECT id FROM chat_conversations WHERE id=:id AND user_id=:u"),
+            {"id": conv_id, "u": user["id"]},
+        ).first()
+        if exists:
+            title = next((m["content"][:40] for m in messages if m["role"] == "user"), "新對話")
+            db.execute(
+                text(
+                    "UPDATE chat_conversations SET messages=CAST(:msgs AS jsonb), "
+                    "title=:t, updated_at=now() WHERE id=:id"
+                ),
+                {"msgs": j(full), "t": title, "id": conv_id},
+            )
+            db.commit()
+        else:
+            conv_id = None
+    if not conv_id:
+        title = next((m["content"][:40] for m in messages if m["role"] == "user"), "新對話")
+        row = db.execute(
+            text(
+                "INSERT INTO chat_conversations (user_id, title, messages) "
+                "VALUES (:u, :t, CAST(:msgs AS jsonb)) RETURNING id"
+            ),
+            {"u": user["id"], "t": title, "msgs": j(full)},
+        ).mappings().one()
+        conv_id = str(row["id"])
+        db.commit()
+    return {"reply": reply, "conversation_id": conv_id}
+
+
+@router.get("/conversations")
+def list_conversations(user: CurrentUser, db: DB) -> list[dict]:
+    rows = db.execute(
+        text(
+            "SELECT id, title, created_at, updated_at, "
+            "jsonb_array_length(messages) AS n "
+            "FROM chat_conversations WHERE user_id=:u ORDER BY updated_at DESC LIMIT 100"
+        ),
+        {"u": user["id"]},
+    ).mappings().all()
+    return [
+        {"id": str(r["id"]), "title": r["title"], "created_at": r["created_at"].isoformat(),
+         "updated_at": r["updated_at"].isoformat(), "messages_count": r["n"]}
+        for r in rows
+    ]
+
+
+@router.get("/conversations/{conv_id}")
+def get_conversation(user: CurrentUser, db: DB, conv_id: str) -> dict:
+    row = db.execute(
+        text("SELECT id, title, messages FROM chat_conversations WHERE id=:id AND user_id=:u"),
+        {"id": conv_id, "u": user["id"]},
+    ).mappings().first()
+    if not row:
+        from fastapi import HTTPException
+
+        raise HTTPException(404, "對話不存在")
+    return {"id": str(row["id"]), "title": row["title"], "messages": row["messages"] or []}
+
+
+@router.delete("/conversations/{conv_id}", status_code=204)
+def delete_conversation(user: CurrentUser, db: DB, conv_id: str) -> None:
+    db.execute(
+        text("DELETE FROM chat_conversations WHERE id=:id AND user_id=:u"),
+        {"id": conv_id, "u": user["id"]},
+    )
+    db.commit()
