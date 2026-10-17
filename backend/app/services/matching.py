@@ -132,6 +132,11 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
         if k in ("visa_status", "preferred_locations", "salary_expectation",
                  "availability", "total_years", "candidate_name"):
             hf[k] = v
+    # total_years 統一為數字（信息庫可能存字符串）
+    try:
+        hf["total_years"] = float(hf.get("total_years") or 0)
+    except (TypeError, ValueError):
+        hf["total_years"] = 0.0
     profile["hard_facts"] = hf
     # 語言能力：info_fields 的 languages/語言能力 key 轉為列表供硬性條件檢查
     lang_val = info_map.get("languages") or info_map.get("語言能力") or info_map.get("语言能力")
