@@ -199,7 +199,7 @@ def list_matches(
             SELECT m.id, m.posting_id, m.match_score, m.priority_score, m.hard_failures,
                    m.reasons, m.score_breakdown, m.status,
                    p.company_name, p.title, p.location, p.department, p.is_campus,
-                   p.org_level, p.apply_url, p.first_seen_at
+                   p.org_level, p.apply_url, p.first_seen_at, p.raw->>'directions' AS directions
             FROM job_matches m
             JOIN job_postings p ON p.id = m.posting_id
             WHERE m.user_id = :uid AND (CAST(:st AS text) IS NULL OR CAST(m.status AS text) = :st)
@@ -239,6 +239,7 @@ def list_matches(
                 "is_campus": r["is_campus"],
                 "org_level": r["org_level"],
                 "department": r["department"],
+                "directions": r["directions"] or [],
                 "hard_failures": r["hard_failures"] or [],
                 "score_breakdown": r["score_breakdown"] or {},
                 "reasons": r["reasons"] or [],

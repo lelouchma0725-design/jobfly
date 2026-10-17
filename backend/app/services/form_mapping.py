@@ -72,6 +72,13 @@ def build_candidate_payload(db: Session, user_id: str) -> dict:
     for r in info:
         if r["key"] in hard_keys and r["value"]:
             payload[r["key"]] = r["value"]
+    # 語言能力（信息庫 languages/語言能力 → payload.languages）
+    for r in info:
+        if r["key"] in ("languages", "語言能力", "语言能力") and r["value"]:
+            payload["languages"] = [
+                s.strip() for s in str(r["value"]).replace("、", ",").split(",") if s.strip()
+            ]
+            break
     # 姓名兜底：元信息 full_name > profiles.full_name > 簡歷提取的 candidate_name
     if not payload.get("full_name") and payload.get("candidate_name"):
         payload["full_name"] = payload["candidate_name"]

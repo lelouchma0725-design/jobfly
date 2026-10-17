@@ -56,7 +56,7 @@ def _check_against(profile: dict, req: dict) -> bool:
         return bool(hard.get("visa_status"))  # 有簽證信息即放行，細粒度在 LLM 評分
     if kind == "language":
         langs = " ".join(profile.get("languages") or [])
-        return bool(langs)
+        return bool(langs)  # 有語言信息即放行，具體匹配度在 LLM 評分
     if kind == "certificate":
         certs = " ".join(profile.get("certificates") or [])
         return bool(certs)
@@ -83,6 +83,26 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
         raise ValueError("請先生成用戶畫像")
     if not posting:
         raise ValueError("崗位不存在")
+
+    # 統一信息源：元信息表（含語言能力等問答）合併進畫像，兩邊永不失同步
+    info = db.execute(
+        text("SELECT key, value FROM user_info_fields WHERE user_id=:uid"),
+        {"uid": user_id},
+    ).mappings().all()
+    info_map = {r["key"]: r["value"] for r in info}
+    profile = dict(profile)
+    hf = dict(profile.get("hard_facts") or {})
+    for k, v in info_map.items():
+        if k in ("visa_status", "preferred_locations", "salary_expectation",
+                 "availability", "total_years", "candidate_name"):
+            hf[k] = v
+    profile["hard_facts"] = hf
+    # 語言能力：info_fields 的 languages/語言能力 key 轉為列表供硬性條件檢查
+    lang_val = info_map.get("languages") or info_map.get("語言能力") or info_map.get("语言能力")
+    if lang_val:
+        profile["languages"] = [s.strip() for s in str(lang_val).replace("、", ",").split(",") if s.strip()]
+    elif hf.get("languages"):
+        profile["languages"] = hf["languages"] if isinstance(hf["languages"], list) else [str(hf["languages"])]
 
     hard_reqs = extract_hard_requirements(posting["description_text"] or posting["title"])
     # location 類要求不硬攔截（交給地區加權處理：命中加分、未命中降分）
