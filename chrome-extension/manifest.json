@@ -1,9 +1,14 @@
 {
   "manifest_version": 3,
   "name": "JobsComing RPA 填報助手",
-  "version": "0.1.0",
+  "version": "0.6.0",
   "description": "在已登錄的招聘官網上，一鍵把 JobsComing 準備好的資料自動填入申請表單。",
-  "permissions": ["storage", "activeTab", "scripting", "tabs"],
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "tabs"
+  ],
   "host_permissions": [
     "https://jobscoming-backend.onrender.com/*",
     "https://*.citics.com/*",
@@ -26,7 +31,9 @@
         "https://*.greenhouse.io/*",
         "https://*.lever.co/*"
       ],
-      "js": ["content.js"],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle",
       "all_frames": true
     }
