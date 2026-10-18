@@ -287,3 +287,99 @@
     return true;
   });
 })();
+
+  /** 供 popup 以 executeScript 直接調用的入口（不依賴標籤消息通道）。 */
+  async function runAction(action) {
+    const type = action.type;
+    if (type === "SCRAPE") {
+      const pageType = action.pageType || detectPageType();
+      if (!pageType) return { ok: false, error: "無法從網址識別簡歷類型，請在擴展面板手動選擇" };
+      const fields = collectFields()
+        .filter((f) => !f.isFile)
+        .map((f) => ({ label: f.label, value: f.el.value || "" }));
+      const r = await chrome.runtime.sendMessage({
+        type: "SCRAPE_SAVE", site: location.hostname, pageType, fields,
+      });
+      showPanel(`回傳「${pageType}」`);
+      if (r && r.ok) {
+        log(`✅ 已回傳 ${r.out.saved} 個字段到元信息表`, true);
+        return { ok: true, saved: r.out.saved };
+      }
+      log("回傳失敗: " + (r?.error || ""), false);
+      return { ok: false, error: r?.error || "" };
+    }
+    if (type === "FILL_RESUME") {
+      const r = await chrome.runtime.sendMessage({ type: "RPA_FIELDS" });
+      if (!r || !r.ok) return { ok: false, error: "讀取元信息失敗: " + (r?.error || "") };
+      showPanel(`填報「${action.pageType}」`);
+      const fields = collectFields();
+      let filled = 0;
+      const skipped = [];
+      for (const f of fields) {
+        if (f.isFile) continue;
+        if (!f.label) continue;
+        const best = r.fields
+          .map((m) => ({ m, s: matchScore(f.label, m) }))
+          .filter((x) => x.s > 0 && x.m.value)
+          .sort((a, b) => b.s - a.s)[0];
+        if (best) {
+          if (await fillValue(f, best.m.value)) filled++;
+        } else skipped.push(f.label);
+      }
+      log(`✅ 已填寫 ${filled} 個欄位`, true);
+      if (skipped.length) log("未匹配（需手動填）: " + skipped.slice(0, 12).join("、"), false);
+      return { ok: true, filled, skipped };
+    }
+    if (type === "VERIFY") {
+      const pageType = action.pageType || detectPageType() || "當前頁面";
+      const fields = collectFields()
+        .filter((f) => !f.isFile)
+        .map((f) => ({ label: f.label, value: f.el.value || "" }));
+      const r = await chrome.runtime.sendMessage({
+        type: "RPA_VERIFY", site: location.hostname, pageType,
+        compareWith: action.compareWith, fields,
+      });
+      showPanel(`校驗「${pageType}」`);
+      if (r && r.ok && r.out.ok) {
+        log(r.out.summary, true);
+        for (const d of r.out["不一致"] || []) log(`⚠️ ${d.label}: 已存「${d.base}」≠ 當前「${d.current}」`, false);
+        for (const m of r.out["缺失"] || []) log(`❌ 缺失: ${m.label}（已存「${m.base}」）`, false);
+        return { ok: true, summary: r.out.summary };
+      }
+      log("校驗失敗: " + ((r && r.out && r.out.error) || r?.error || ""), false);
+      return { ok: false, error: (r && r.out && r.out.error) || r?.error || "" };
+    }
+    if (type === "FILL") {
+      const taskId = action.taskId;
+      window.__jobsfly_task__ = taskId;
+      const r = await chrome.runtime.sendMessage({ type: "FILL_PLAN", taskId });
+      if (!r || !r.ok) return { ok: false, error: "獲取填寫方案失敗: " + (r?.error || "") };
+      const plan = r.plan;
+      showPanel(`${plan.company} · ${plan.title}`);
+      log(`開始填報「${plan.title}」`);
+      const fields = collectFields();
+      const machine = plan.machine_fields || [];
+      const fileInputs = fields.filter((f) => f.isFile).map((f) => f.el);
+      let filled = 0;
+      const skipped = [];
+      for (const f of fields) {
+        if (f.isFile) continue;
+        const best = machine
+          .map((m) => ({ m, s: matchScore(f.label, m) }))
+          .filter((x) => x.s > 0 && x.m.value)
+          .sort((a, b) => b.s - a.s)[0];
+        if (best) {
+          if (await fillValue(f, best.m.value)) filled++;
+        } else if (f.label) skipped.push(f.label);
+      }
+      log(`✅ 已自動填寫 ${filled} 個欄位`, true);
+      if (skipped.length) log("未匹配欄位（請手動填）: " + skipped.slice(0, 8).join("、"), false);
+      await uploadResume(fileInputs, plan.resume);
+      log("檢查高亮欄位無誤後點「提交」，再回面板點「標記為已投遞」");
+      return { ok: true, filled, skipped };
+    }
+    return { ok: false, error: "未知操作 " + type };
+  }
+
+  window.__jrpa_run__ = runAction;
+})();
