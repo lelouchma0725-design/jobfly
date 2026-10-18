@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useT } from "../lib/i18n";
+import { decryptText, encryptText, getKeyB64, SENSITIVE_RE } from "../lib/crypto";
 
-type InfoField = { key: string; value: string; source: string; updated_at: string; sensitive?: boolean };
+type InfoField = { key: string; value: string; source: string; updated_at: string; sensitive?: boolean; encrypted?: string | null };
 type Full = {
   basic: { full_name: string | null; email: string | null; phone: string | null };
   profile: {
@@ -56,6 +57,16 @@ export default function ProfileInfo() {
   async function load() {
     try {
       const d = await api<Full>("/api/me/profile-full");
+      // 敏感字段本地解密（密鑰存在時）
+      const key = getKeyB64();
+      if (key) {
+        for (const f of d.info_fields) {
+          if (f.encrypted) {
+            const pt = await decryptText(key, f.encrypted);
+            if (pt != null) f.value = pt;
+          }
+        }
+      }
       setData(d);
       setBasic({
         full_name: d.basic.full_name ?? "",

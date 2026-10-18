@@ -28,6 +28,17 @@ DB = Annotated[Session, Depends(get_db)]
 class InfoFieldUpsert(BaseModel):
     key: str
     value: str
+    encrypted: str | None = None  # 敏感字段：客戶端 AES-GCM 密文（base64: iv|ct）
+
+
+class InfoFieldItem(BaseModel):
+    key: str
+    value: str
+    encrypted: str | None = None
+
+
+class InfoFieldsBatch(BaseModel):
+    fields: list[InfoFieldItem]
 
 
 SENSITIVE_KEY_RE = re.compile(
@@ -36,11 +47,18 @@ SENSITIVE_KEY_RE = re.compile(
 )
 
 
+def _mask_value(v: str) -> str:
+    """敏感字段服務器端只存掩碼（顯示用），明文不落庫。"""
+    if len(v) <= 4:
+        return "****"
+    return v[:2] + "*" * min(len(v) - 4, 8) + v[-2:]
+
+
 @router.get("")
 def list_fields(user: CurrentUser, db: DB) -> list[dict]:
     rows = db.execute(
         text(
-            "SELECT key, value, source, updated_at FROM user_info_fields "
+            "SELECT key, value, sensitive_enc, source, updated_at FROM user_info_fields "
             "WHERE user_id=:uid ORDER BY updated_at DESC LIMIT 200"
         ),
         {"uid": user["id"]},
@@ -48,26 +66,76 @@ def list_fields(user: CurrentUser, db: DB) -> list[dict]:
     return [
         {"key": r["key"], "value": r["value"], "source": r["source"],
          "updated_at": r["updated_at"].isoformat(),
-         "sensitive": bool(SENSITIVE_KEY_RE.search(r["key"]))}
+         "sensitive": bool(SENSITIVE_KEY_RE.search(r["key"])),
+         "encrypted": r["sensitive_enc"]}
         for r in rows
     ]
 
 
 @router.put("")
 def upsert_field(user: CurrentUser, db: DB, payload: InfoFieldUpsert) -> dict:
-    db.execute(
-        text(
-            """
-            INSERT INTO user_info_fields (user_id, key, value, source)
-            VALUES (:uid, :k, :v, 'user')
-            ON CONFLICT (user_id, key) DO UPDATE
-              SET value=EXCLUDED.value, source='user', updated_at=now()
-            """
-        ),
-        {"uid": user["id"], "k": payload.key.strip()[:100], "v": payload.value.strip()[:2000]},
-    )
+    key = payload.key.strip()[:100]
+    sensitive = bool(SENSITIVE_KEY_RE.search(key))
+    if sensitive and payload.encrypted:
+        # 第二層 E2EE：服務器只存密文 + 掩碼顯示值，明文不落庫
+        db.execute(
+            text(
+                """
+                INSERT INTO user_info_fields (user_id, key, value, sensitive_enc, source)
+                VALUES (:uid, :k, :v, :enc, 'user')
+                ON CONFLICT (user_id, key) DO UPDATE
+                  SET value=EXCLUDED.value, sensitive_enc=EXCLUDED.sensitive_enc,
+                      source='user', updated_at=now()
+                """
+            ),
+            {"uid": user["id"], "k": key,
+             "v": _mask_value(payload.value.strip()[:2000]),
+             "enc": payload.encrypted[:4000]},
+        )
+    else:
+        db.execute(
+            text(
+                """
+                INSERT INTO user_info_fields (user_id, key, value, source)
+                VALUES (:uid, :k, :v, 'user')
+                ON CONFLICT (user_id, key) DO UPDATE
+                  SET value=EXCLUDED.value, sensitive_enc=NULL,
+                      source='user', updated_at=now()
+                """
+            ),
+            {"uid": user["id"], "k": key, "v": payload.value.strip()[:2000]},
+        )
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "sensitive": sensitive}
+
+
+@router.put("/batch")
+def upsert_fields_batch(user: CurrentUser, db: DB, payload: InfoFieldsBatch) -> dict:
+    """RPA 回傳批量：敏感字段必須帶密文，否則只存掩碼。"""
+    saved = 0
+    for f in payload.fields:
+        key = f.key.strip()[:100]
+        sensitive = bool(SENSITIVE_KEY_RE.search(key))
+        value = f.value.strip()[:2000]
+        enc = f.encrypted[:4000] if f.encrypted else None
+        if sensitive and not enc:
+            value = _mask_value(value)
+        db.execute(
+            text(
+                """
+                INSERT INTO user_info_fields (user_id, key, value, sensitive_enc, source)
+                VALUES (:uid, :k, :v, :enc, 'website')
+                ON CONFLICT (user_id, key) DO UPDATE
+                  SET value=EXCLUDED.value,
+                      sensitive_enc=COALESCE(EXCLUDED.sensitive_enc, user_info_fields.sensitive_enc),
+                      source='website', updated_at=now()
+                """
+            ),
+            {"uid": user["id"], "k": key, "v": value, "enc": enc},
+        )
+        saved += 1
+    db.commit()
+    return {"ok": True, "saved": saved}
 
 
 @router.delete("/{key}")

@@ -178,10 +178,23 @@
     for (const f of fields) {
       if (f.isFile) continue;
       if (!f.label) continue;
+      // 拼音欄位無數據源，永不自動填（列入手動清單）
+      if (f.label.includes("拼音")) {
+        skipped.push(f.label);
+        continue;
+      }
       const best = (entries || [])
         .map((m) => {
-          const plainLabel = String(m.label || "").split("｜").pop();
-          return { m, plainLabel, s: matchScore(f.label, { ...m, label: plainLabel }) };
+          const parts = String(m.label || "").split("｜");
+          const ctx = parts.length > 1 ? parts[0] : "";
+          const plainLabel = parts.pop();
+          let s = matchScore(f.label, { ...m, label: plainLabel });
+          // 上下文聯想優先：父親/母親等前綴一致 +5
+          if (ctx && f.context && (f.context.includes(ctx) || ctx.includes(f.context))) s += 5;
+          else if (ctx && f.label.includes("父") && ctx.includes("父")) s += 5;
+          else if (ctx && f.label.includes("母") && ctx.includes("母")) s += 5;
+          else if (ctx && f.label.includes(ctx)) s += 5;
+          return { m, plainLabel, s };
         })
         .filter((x) => x.s > 0 && x.m.value)
         .sort((a, b) => b.s - a.s)[0];

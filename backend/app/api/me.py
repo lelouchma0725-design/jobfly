@@ -118,7 +118,7 @@ def profile_full(user: CurrentUser, db: DB) -> dict:
     ).mappings().first()
     fields = db.execute(
         text(
-            "SELECT key, value, source, updated_at FROM user_info_fields "
+            "SELECT key, value, sensitive_enc, source, updated_at FROM user_info_fields "
             "WHERE user_id=:uid ORDER BY updated_at DESC LIMIT 200"
         ),
         {"uid": user["id"]},
@@ -139,7 +139,8 @@ def profile_full(user: CurrentUser, db: DB) -> dict:
         },
         "info_fields": [
             {"key": r["key"], "value": r["value"], "source": r["source"],
-             "updated_at": r["updated_at"].isoformat()}
+             "updated_at": r["updated_at"].isoformat(),
+             "encrypted": r["sensitive_enc"]}
             for r in fields
         ],
     }
