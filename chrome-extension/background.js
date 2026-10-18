@@ -2,15 +2,45 @@
 const API_BASE = "https://jobscoming-backend.onrender.com";
 
 async function apiFetch(path, options = {}) {
-  const { token } = await chrome.storage.local.get("token");
-  const res = await fetch(API_BASE + path, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers || {}),
-    },
-  });
+  const { token, refreshToken } = await chrome.storage.local.get(["token", "refreshToken"]);
+  const doFetch = (tk) =>
+    fetch(API_BASE + path, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(tk ? { Authorization: `Bearer ${tk}` } : {}),
+        ...(options.headers || {}),
+      },
+    });
+
+  let res = await doFetch(token);
+  // 401 → 自動用 refresh token 續期並重試一次
+  if (res.status === 401 && refreshToken) {
+    try {
+      const r = await fetch(API_BASE + "/api/auth/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      if (r.ok) {
+        const data = await r.json();
+        await chrome.storage.local.set({
+          token: data.access_token,
+          refreshToken: data.refresh_token || refreshToken,
+        });
+        res = await doFetch(data.access_token);
+      }
+    } catch {
+      /* 續期失敗走下方 AUTH 流程 */
+    }
+  }
+  if (res.status === 401) {
+    // 續期也失敗 → 清除憑證，通知 popup 顯示登錄框
+    await chrome.storage.local.remove(["token", "refreshToken"]);
+    const err = new Error("AUTH_EXPIRED");
+    err.authExpired = true;
+    throw err;
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`);
@@ -28,7 +58,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             method: "POST",
             body: JSON.stringify({ email: msg.email, password: msg.password }),
           });
-          await chrome.storage.local.set({ token: data.access_token });
+          await chrome.storage.local.set({
+            token: data.access_token,
+            refreshToken: data.refresh_token || "",
+          });
           sendResponse({ ok: true });
           break;
         }
@@ -91,7 +124,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: false, error: "unknown message" });
       }
     } catch (e) {
-      sendResponse({ ok: false, error: String(e.message || e) });
+      sendResponse({
+        ok: false,
+        error: e && e.authExpired ? "AUTH_EXPIRED" : String(e.message || e),
+      });
     }
   })();
   return true; // 異步響應
