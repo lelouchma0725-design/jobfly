@@ -102,7 +102,7 @@
     return 0;
   }
 
-  async function fillValue(fieldInfo, value) {
+  function fillValue(fieldInfo, value) {
     const { el, isSelect } = fieldInfo;
     if (el.readOnly || el.disabled) return false;
     try {
@@ -407,7 +407,7 @@
       .map((f) => ({ label: f.label, value: f.el.value || "" }));
   }
 
-  async function syncFill(entries) {
+  function syncFill(entries) {
     const fields = collectFields();
     let filled = 0;
     const skipped = [];
@@ -419,7 +419,7 @@
         .filter((x) => x.s > 0 && x.m.value)
         .sort((a, b) => b.s - a.s)[0];
       if (best) {
-        if (await fillValue(f, best.m.value)) filled++;
+        if (fillValue(f, best.m.value)) filled++;
       } else {
         skipped.push(f.label);
       }
@@ -427,7 +427,7 @@
     return { filled, skipped };
   }
 
-  async function syncUploadResume(fileInfo) {
+  function syncUploadResume(fileInfo) {
     const inputs = collectFields().filter((f) => f.isFile).map((f) => f.el);
     if (!inputs.length) return { uploaded: false, note: "本頁無文件上傳欄位" };
     if (!fileInfo || !fileInfo.dataUrl) return { uploaded: false, note: "無簡歷文件" };
