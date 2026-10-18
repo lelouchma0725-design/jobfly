@@ -75,8 +75,8 @@ async function runOnTab(action) {
     },
     args: [action],
   });
-  // 輪詢結果（最多 60 秒）
-  for (let i = 0; i < 120; i++) {
+  // 輪詢結果（最多 120 秒，覆蓋後台冷啟動）
+  for (let i = 0; i < 240; i++) {
     await new Promise((r) => setTimeout(r, 500));
     const got = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
@@ -85,7 +85,7 @@ async function runOnTab(action) {
     const res = got[0] ? got[0].result : null;
     if (res) return res;
   }
-  return { ok: false, error: "超時無響應（60 秒）：請檢查頁面右下角面板日誌" };
+  return { ok: false, error: "超時無響應（120 秒）：請查看頁面右下角面板日誌" };
 }
 
 function sendToTab(type, extra = {}) {
