@@ -35,17 +35,37 @@ $("refresh").addEventListener("click", () => {
   loadTasks().catch((e) => isAuthError(e) && showLogin());
 });
 
+const SITE_RE = /citics\.com|gtht\.com|greenhouse\.io|lever\.co/;
+
+/** 選目標頁籤：優先當前活動頁（若是官網）；否則找最近訪問的官網頁籤。 */
+async function pickTab() {
+  const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (active && active.url && SITE_RE.test(active.url)) return active;
+  const all = await chrome.tabs.query({ currentWindow: true });
+  const site = all.filter((t) => t.url && SITE_RE.test(t.url));
+  return site[site.length - 1] || active;
+}
+
 function sendToTab(type, extra = {}) {
-  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-    ensureContent(tab).then(() => {
-      chrome.tabs.sendMessage(tab.id, { type, ...extra }, (resp) => {
-        if (chrome.runtime.lastError || !resp) {
-          $("status").textContent = "操作失敗：請確認頁面已打開且不是瀏覽器內部頁面（chrome:// 等）";
-          $("status").className = "err";
-        }
-      });
-    });
-  });
+  (async () => {
+    const tab = await pickTab();
+    if (!tab || !tab.url || !/^https?:/.test(tab.url)) {
+      $("status").textContent = "請先切換到官網頁面（當前是瀏覽器內部頁面，無法操作）";
+      $("status").className = "err";
+      return;
+    }
+    await ensureContent(tab);
+    try {
+      const resp = await chrome.tabs.sendMessage(tab.id, { type, ...extra });
+      if (!resp) {
+        $("status").textContent = "頁面腳本無響應：請在官網頁面按 F5 重新整理後再試";
+        $("status").className = "err";
+      }
+    } catch (e) {
+      $("status").textContent = "操作失敗: " + (e?.message || e);
+      $("status").className = "err";
+    }
+  })();
 }
 
 /** 若內容腳本未加載（頁面不在白名單），現場注入後再通訊。 */
@@ -55,8 +75,9 @@ async function ensureContent(tab) {
   } catch {
     try {
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
-    } catch {
-      // 無法注入（chrome:// 等內部頁面）
+      await new Promise((r) => setTimeout(r, 300)); // 等監聽器註冊
+    } catch (e) {
+      throw new Error("無法注入頁面腳本: " + (e?.message || e));
     }
   }
 }
@@ -119,15 +140,19 @@ async function loadTasks() {
     btn.className = "primary";
     btn.textContent = "開始填報此頁";
     btn.addEventListener("click", async () => {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      ensureContent(tab).then(() => {
-        chrome.tabs.sendMessage(tab.id, { type: "FILL", taskId: t.id }, (resp) => {
-          if (chrome.runtime.lastError || !resp) {
-            $("status").textContent = "操作失敗：請確認已打開官網申請頁面";
-            $("status").className = "err";
-          }
-        });
-      });
+      const tab = await pickTab();
+      if (!tab || !tab.url || !/^https?:/.test(tab.url)) {
+        $("status").textContent = "請先切換到官網申請頁面";
+        $("status").className = "err";
+        return;
+      }
+      await ensureContent(tab);
+      try {
+        await chrome.tabs.sendMessage(tab.id, { type: "FILL", taskId: t.id });
+      } catch (e) {
+        $("status").textContent = "填報失敗: " + (e?.message || e);
+        $("status").className = "err";
+      }
     });
     div.appendChild(btn);
     box.appendChild(div);
