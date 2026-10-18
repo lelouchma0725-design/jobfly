@@ -1,7 +1,19 @@
 const $ = (id) => document.getElementById(id);
 
+function showLogin() {
+  $("loginBox").style.display = "block";
+  $("taskBox").style.display = "none";
+  $("status").textContent = "登錄已失效，請重新登錄";
+  $("status").className = "err";
+}
+
+function isAuthError(e) {
+  return !!e && (e.authExpired || String(e.message || e).includes("AUTH_EXPIRED"));
+}
+
 chrome.storage.local.get("token").then(({ token }) => {
-  if (token) showTasks();
+  if (token) showTasks().catch((e) => isAuthError(e) && showLogin());
+  else showLogin();
 });
 
 $("signin").addEventListener("click", async () => {
@@ -19,7 +31,9 @@ $("signin").addEventListener("click", async () => {
   }
 });
 
-$("refresh").addEventListener("click", loadTasks);
+$("refresh").addEventListener("click", () => {
+  loadTasks().catch((e) => isAuthError(e) && showLogin());
+});
 
 function sendToTab(type, extra = {}) {
   chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
@@ -56,8 +70,19 @@ async function showTasks() {
 
 async function loadTasks() {
   $("status").textContent = "讀取任務…";
-  const r = await chrome.runtime.sendMessage({ type: "TASKS" });
+  let r;
+  try {
+    r = await chrome.runtime.sendMessage({ type: "TASKS" });
+  } catch (e) {
+    $("status").textContent = "讀取失敗: " + (e?.message || e);
+    $("status").className = "err";
+    return;
+  }
   if (!r || !r.ok) {
+    if (isAuthError(r?.error)) {
+      showLogin();
+      return;
+    }
     $("status").textContent = "讀取失敗: " + (r?.error || "");
     $("status").className = "err";
     return;
