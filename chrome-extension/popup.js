@@ -37,13 +37,28 @@ $("refresh").addEventListener("click", () => {
 
 function sendToTab(type, extra = {}) {
   chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-    chrome.tabs.sendMessage(tab.id, { type, ...extra }, (resp) => {
-      if (chrome.runtime.lastError || !resp) {
-        $("status").textContent = "請先打開官網的簡歷/申請頁面再操作";
-        $("status").className = "err";
-      }
+    ensureContent(tab).then(() => {
+      chrome.tabs.sendMessage(tab.id, { type, ...extra }, (resp) => {
+        if (chrome.runtime.lastError || !resp) {
+          $("status").textContent = "操作失敗：請確認頁面已打開且不是瀏覽器內部頁面（chrome:// 等）";
+          $("status").className = "err";
+        }
+      });
     });
   });
+}
+
+/** 若內容腳本未加載（頁面不在白名單），現場注入後再通訊。 */
+async function ensureContent(tab) {
+  try {
+    await chrome.tabs.sendMessage(tab.id, { type: "PING" });
+  } catch {
+    try {
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
+    } catch {
+      // 無法注入（chrome:// 等內部頁面）
+    }
+  }
 }
 
 $("scrape").addEventListener("click", () => {
@@ -105,11 +120,13 @@ async function loadTasks() {
     btn.textContent = "開始填報此頁";
     btn.addEventListener("click", async () => {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      chrome.tabs.sendMessage(tab.id, { type: "FILL", taskId: t.id }, (resp) => {
-        if (chrome.runtime.lastError || !resp) {
-          $("status").textContent = "請先打開官網的崗位申請頁面再點此按鈕";
-          $("status").className = "err";
-        }
+      ensureContent(tab).then(() => {
+        chrome.tabs.sendMessage(tab.id, { type: "FILL", taskId: t.id }, (resp) => {
+          if (chrome.runtime.lastError || !resp) {
+            $("status").textContent = "操作失敗：請確認已打開官網申請頁面";
+            $("status").className = "err";
+          }
+        });
       });
     });
     div.appendChild(btn);

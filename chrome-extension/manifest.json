@@ -6,8 +6,7 @@
   "permissions": ["storage", "activeTab", "scripting", "tabs"],
   "host_permissions": [
     "https://jobscoming-backend.onrender.com/*",
-    "https://careers.citics.com/*",
-    "https://global-kong.citics.com/*",
+    "https://*.citics.com/*",
     "https://hr.gtht.com/*",
     "https://*.greenhouse.io/*",
     "https://*.lever.co/*"
@@ -22,7 +21,7 @@
   "content_scripts": [
     {
       "matches": [
-        "https://careers.citics.com/*",
+        "https://*.citics.com/*",
         "https://hr.gtht.com/*",
         "https://*.greenhouse.io/*",
         "https://*.lever.co/*"
