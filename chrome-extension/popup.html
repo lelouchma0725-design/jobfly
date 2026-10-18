@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { width: 340px; font: 13px/1.5 system-ui, sans-serif; margin: 0; padding: 12px; }
+    h2 { margin: 0 0 8px; font-size: 15px; }
+    input { width: 100%; box-sizing: border-box; margin: 4px 0; padding: 6px; }
+    button { width: 100%; margin: 6px 0; padding: 8px; cursor: pointer; }
+    .primary { background: #1d4ed8; color: #fff; border: none; border-radius: 6px; }
+    .ghost { background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 6px; }
+    .task { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; margin: 6px 0; }
+    .task b { display: block; }
+    .muted { color: #6b7280; font-size: 12px; }
+    .ok { color: #15803d; }
+    .err { color: #dc2626; }
+    #status { min-height: 16px; }
+  </style>
+</head>
+<body>
+  <h2>JobsComing RPA 填報助手</h2>
+  <div id="loginBox">
+    <input id="email" type="email" placeholder="JobsComing 郵箱" />
+    <input id="password" type="password" placeholder="密碼" />
+    <button id="signin" class="primary">登錄</button>
+  </div>
+  <div id="taskBox" style="display: none">
+    <div id="tasks"></div>
+    <button id="refresh" class="ghost">刷新任務</button>
+    <div id="status"></div>
+    <p class="muted">
+      用法：先在官網登錄並打開崗位申請頁 → 回到本面板點「開始填報」→ 表單自動填充並高亮，
+      你只需檢查並點「提交」。
+    </p>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
