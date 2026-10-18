@@ -147,6 +147,10 @@
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
+      if (msg.type === "PING") {
+        sendResponse({ ok: true });
+        return;
+      }
       // ── 簡歷維護助手：回傳 / 填報 / 校驗 ──
       if (msg.type === "SCRAPE") {
         const fields = collectFields()
