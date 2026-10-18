@@ -381,5 +381,17 @@
     return { ok: false, error: "未知操作 " + type };
   }
 
-  window.__jrpa_run__ = runAction;
+  /** executeScript 不等待 Promise：同步觸發，結果寫入共享窗口供 popup 輪詢。 */
+  window.__jrpa_result__ = null;
+  window.__jrpa_run__ = (action) => {
+    window.__jrpa_result__ = null;
+    runAction(action)
+      .then((r) => {
+        window.__jrpa_result__ = r;
+      })
+      .catch((e) => {
+        window.__jrpa_result__ = { ok: false, error: String((e && e.message) || e) };
+      });
+    return true;
+  };
 })();

@@ -60,19 +60,32 @@ async function ensureLibrary(tab) {
   await new Promise((r) => setTimeout(r, 300));
 }
 
-/** 直接注入執行操作（不經標籤消息通道，杜絕 Receiving end 錯誤）。 */
+/** 直接注入執行操作：觸發後輪詢頁面結果（executeScript 不等待 Promise）。 */
 async function runOnTab(action) {
   const tab = await pickTab();
   if (!tab || !tab.url || !/^https?:/.test(tab.url)) {
     throw new Error("請先切換到官網頁面（當前是瀏覽器內部頁面）");
   }
   await ensureLibrary(tab);
-  const results = await chrome.scripting.executeScript({
+  await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    func: (act) => window.__jrpa_run__(act),
+    func: (act) => {
+      window.__jrpa_run__(act);
+      return true;
+    },
     args: [action],
   });
-  return results[0] ? results[0].result : { ok: false, error: "執行無結果" };
+  // 輪詢結果（最多 60 秒）
+  for (let i = 0; i < 120; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    const got = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => window.__jrpa_result__,
+    });
+    const res = got[0] ? got[0].result : null;
+    if (res) return res;
+  }
+  return { ok: false, error: "超時無響應（60 秒）：請檢查頁面右下角面板日誌" };
 }
 
 function sendToTab(type, extra = {}) {
