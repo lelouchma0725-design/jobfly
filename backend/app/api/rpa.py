@@ -160,6 +160,29 @@ SITE_FLOWS = {
 }
 
 
+@router.get("/pinyin")
+def pinyin(user: CurrentUser, name: str) -> dict:
+    """拼音聯想：根據中文姓名用 LLM 生成姓/名的拼音（無需用戶手動填）。"""
+    from app.core.llm import chat_json
+
+    name = name.strip()[:20]
+    if not name:
+        return {"surname_pinyin": "", "given_pinyin": ""}
+    try:
+        out = chat_json(
+            "你是中文姓名拼音助手。輸出 JSON：{\"surname_pinyin\": \"姓的拼音\", \"given_pinyin\": \"名的拼音\"}。"
+            "規則：小寫、無聲調、按護照拼音慣例（如 马新宇 → ma / xinyu）。",
+            f"姓名：{name}",
+            max_tokens=200,
+        )
+        return {
+            "surname_pinyin": str(out.get("surname_pinyin") or ""),
+            "given_pinyin": str(out.get("given_pinyin") or ""),
+        }
+    except Exception:  # noqa: BLE001
+        return {"surname_pinyin": "", "given_pinyin": ""}
+
+
 @router.get("/flow/{site}")
 def site_flow(user: CurrentUser, site: str) -> dict:
     return SITE_FLOWS.get(site, {"說明": "通用流程：登錄後直接填表申請。"})

@@ -178,9 +178,14 @@
     for (const f of fields) {
       if (f.isFile) continue;
       if (!f.label) continue;
-      // 拼音欄位無數據源，永不自動填（列入手動清單）
+      // 拼音欄位：僅當有對應拼音數據時填充
       if (f.label.includes("拼音")) {
-        skipped.push(f.label);
+        const py = (entries || []).find((e) => String(e.label || "").split("｜").pop() === f.label);
+        if (py && py.value) {
+          if (fillValue(f, String(py.value))) filled++;
+        } else {
+          skipped.push(f.label);
+        }
         continue;
       }
       const best = (entries || [])
@@ -205,7 +210,14 @@
         skipped.push(f.label);
       }
     }
-    return { filled, skipped };
+    const detail = fields
+      .filter((f) => f.label && !f.isFile)
+      .slice(0, 40)
+      .map((f) => ({
+        label: f.label,
+        filled: f.el.style.outline ? true : false,
+      }));
+    return { filled, skipped, detail };
   }
 
   function syncUploadResume(fileInfo) {

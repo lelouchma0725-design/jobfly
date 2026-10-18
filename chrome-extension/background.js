@@ -150,6 +150,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true, fields });
           break;
         }
+        case "PINYIN": {
+          const out = await apiFetch(`/api/rpa/pinyin?name=${encodeURIComponent(msg.name || "")}`);
+          sendResponse({ ok: true, out });
+          break;
+        }
         case "RPA_VERIFY": {
           const out = await apiFetch("/api/rpa/verify", {
             method: "POST",

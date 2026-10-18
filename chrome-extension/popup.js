@@ -34,7 +34,7 @@ async function decryptText(keyB64, data) {
   }
 }
 
-const SENSITIVE_RE = /證件|证件|身份證|身份证|護照|护照|家庭|親屬|亲属|緊急聯繫|紧急联系|證件號|证件号|地址|邮编|郵編|電話|电话|手機|手机|姓名拼音/;
+const SENSITIVE_RE = /證件|证件|身份證|身份证|護照|护照|家庭|親屬|亲属|緊急聯繫|紧急联系|證件號|证件号|地址|邮编|郵編|電話|电话|手機|手机|姓名拼音|父|母/;
 
 async function getKeyB64() {
   const st = await chrome.storage.session.get("rawKeyB64");
@@ -233,6 +233,20 @@ async function runAction(type, extra) {
       // 敏感字段本地解密
       const keyB64 = await getKeyB64();
       let entries = r.fields || [];
+      // 拼音聯想：從姓名生成姓/名拼音
+      const nameEntry = entries.find((e) => String(e.label || "").split("｜").pop() === "姓名");
+      const nameVal = nameEntry ? String(nameEntry.value || "").trim() : "";
+      if (nameVal) {
+        try {
+          const py = await bg("PINYIN", { name: nameVal });
+          if (py && py.ok && (py.out.surname_pinyin || py.out.given_pinyin)) {
+            entries = entries.concat([
+              { label: "姓（拼音）", value: py.out.surname_pinyin, source: "pinyin" },
+              { label: "名（拼音）", value: py.out.given_pinyin, source: "pinyin" },
+            ]);
+          }
+        } catch { /* 忽略 */ }
+      }
       if (keyB64) {
         entries = await Promise.all(entries.map(async (e) => {
           if (e.encrypted) {
@@ -253,7 +267,9 @@ async function runAction(type, extra) {
         filled += res ? res.filled : 0;
         if (res) skipped.push(...(res.skipped || []));
       }
-      $("status").textContent = `✅ 已填寫 ${filled} 個欄位` + (skipped.length ? `（未匹配 ${skipped.length} 個）` : "");
+      $("status").textContent =
+        `✅ 已填寫 ${filled} 個欄位` +
+        (skipped.length ? `｜未匹配 ${skipped.length} 個：${skipped.slice(0, 8).join("、")}…` : "");
       $("status").className = "ok";
       return;
     }
