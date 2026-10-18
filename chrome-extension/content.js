@@ -48,15 +48,10 @@
   function collectFields() {
     const out = [];
     document.querySelectorAll("input:not([type=hidden]), textarea, select").forEach((el) => {
-      const label =
-        (el.labels && el.labels[0] && el.labels[0].innerText.trim()) ||
-        (el.closest("label") ? el.closest("label").innerText.trim() : "") ||
-        el.placeholder ||
-        el.name ||
-        "";
       out.push({
         el,
-        label: label.slice(0, 60),
+        label: labelFor(el),
+        context: contextFor(el),
         type: (el.type || el.tagName.toLowerCase()),
         isFile: el.type === "file",
         isSelect: el.tagName.toLowerCase() === "select",
@@ -65,26 +60,74 @@
     return out;
   }
 
+  /** 精確提取欄位標籤：label 元素 → 表單項 label → placeholder/name，避免抓到整塊長文本。 */
+  function labelFor(el) {
+    const ok = (t) => t && t.length >= 1 && t.length <= 40;
+    if (el.labels && el.labels[0]) {
+      const t = el.labels[0].innerText.trim();
+      if (ok(t)) return t;
+    }
+    const item = el.closest(".el-form-item, .form-item, .ant-form-item, .ivu-form-item, .form-group");
+    if (item) {
+      const lab = item.querySelector(":scope > label, .el-form-item__label, .form-label, .label, .ant-form-item-label");
+      if (lab) {
+        const t = lab.innerText.trim();
+        if (ok(t)) return t;
+      }
+    }
+    if (el.placeholder && ok(el.placeholder.trim())) return el.placeholder.trim();
+    if (el.name && ok(el.name)) return el.name;
+    return "";
+  }
+
+  /** 上下文聯想：重複 label 時（如父親/母親的工作單位）取前面緊鄰的說明文本。 */
+  function contextFor(el) {
+    const item = el.closest(".el-form-item, .form-item, .ant-form-item, .ivu-form-item");
+    if (!item || !item.parentElement) return "";
+    const siblings = Array.from(item.parentElement.children);
+    const idx = siblings.indexOf(item);
+    for (let i = idx - 1; i >= 0 && i >= idx - 2; i--) {
+      const t = (siblings[i].innerText || "").trim();
+      if (t && t.length <= 20 && !t.includes("：") && t !== item.innerText.trim()) {
+        return t.slice(0, 20);
+      }
+    }
+    return "";
+  }
+
   function matchScore(label, field) {
     const l = label.toLowerCase();
     const f = (field.label || "").toLowerCase();
     const k = (field.key || "").toLowerCase();
-    if (l.includes(k) || k.includes(l)) return 3;
-    if (l.includes(f) || f.includes(l)) return 2;
+    const short = (s) => s.length >= 1 && s.length <= 12;
+    // 精確/包含匹配僅限短標籤（長文本 label 不得參與模糊包含，防止誤填）
+    if (short(l) && short(f) && (l.includes(f) || f.includes(l))) return 3;
+    if (short(l) && short(k) && (l.includes(k) || k.includes(l))) return 3;
+    if (l === f) return 3;
     const map = {
       name: ["姓名", "名字", "name"],
       phone: ["手機", "电话", "电话", "mobile", "phone", "联系方式"],
       email: ["郵箱", "邮箱", "email", "电子邮箱", "電子郵箱"],
       visa: ["簽證", "签证", "visa"],
       salary: ["薪資", "薪资", "薪酬", "期望薪", "salary"],
-      availability: ["到崗", "到岗", "入職", "入职", "available", "時間"],
+      availability: ["到崗", "到岗", "入職", "入职", "available"],
       skills: ["技能", "特长", "擅長", "skill"],
-      experience: ["經歷", "经历", "工作", "实习", "经验", "experience"],
+      experience: ["工作經歷", "工作经历", "實習經歷", "实习经历", "工作經驗", "experience"],
       education: ["教育", "学历", "學歷", "學校", "学校", "毕业", "education"],
     };
-    const kws = map[field.key] || [];
-    if (kws.some((w) => l.includes(w))) return 1;
+    if (short(l)) {
+      const kws = map[field.key] || [];
+      if (kws.some((w) => l.includes(w))) return 1;
+    }
     return 0;
+  }
+
+  /** 姓/名拆分與下拉值適配。 */
+  function adaptValue(fieldInfo, field, value) {
+    const l = (fieldInfo.label || "").toLowerCase();
+    if (field.key === "name" && (l === "姓" || l === "姓氏")) return String(value || "").slice(0, 1);
+    if (field.key === "name" && l === "名") return String(value || "").slice(1);
+    return value;
   }
 
   function fillValue(fieldInfo, value) {
@@ -121,7 +164,11 @@
   function syncCollect() {
     return collectFields()
       .filter((f) => !f.isFile)
-      .map((f) => ({ label: f.label, value: f.el.value || "" }));
+      .map((f) => ({
+        // 上下文聯想：重複 label 加前綴（如「父親｜工作單位」）
+        label: f.context ? `${f.context}｜${f.label}` : f.label,
+        value: f.el.value || "",
+      }));
   }
 
   function syncFill(entries) {
@@ -132,11 +179,15 @@
       if (f.isFile) continue;
       if (!f.label) continue;
       const best = (entries || [])
-        .map((m) => ({ m, s: matchScore(f.label, m) }))
+        .map((m) => {
+          const plainLabel = String(m.label || "").split("｜").pop();
+          return { m, plainLabel, s: matchScore(f.label, { ...m, label: plainLabel }) };
+        })
         .filter((x) => x.s > 0 && x.m.value)
         .sort((a, b) => b.s - a.s)[0];
       if (best) {
-        if (fillValue(f, best.m.value)) filled++;
+        const v = adaptValue(f, best.m, String(best.m.value));
+        if (fillValue(f, v)) filled++;
       } else {
         skipped.push(f.label);
       }
