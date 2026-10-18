@@ -30,6 +30,12 @@ class InfoFieldUpsert(BaseModel):
     value: str
 
 
+SENSITIVE_KEY_RE = re.compile(
+    r"證件|证件|身份證|身份证|護照|护照|家庭|親屬|亲属|緊急聯繫|紧急联系|"
+    r"證件號|证件号|地址|邮编|郵編|電話|电话|手機|手机|姓名拼音"
+)
+
+
 @router.get("")
 def list_fields(user: CurrentUser, db: DB) -> list[dict]:
     rows = db.execute(
@@ -41,7 +47,8 @@ def list_fields(user: CurrentUser, db: DB) -> list[dict]:
     ).mappings().all()
     return [
         {"key": r["key"], "value": r["value"], "source": r["source"],
-         "updated_at": r["updated_at"].isoformat()}
+         "updated_at": r["updated_at"].isoformat(),
+         "sensitive": bool(SENSITIVE_KEY_RE.search(r["key"]))}
         for r in rows
     ]
 

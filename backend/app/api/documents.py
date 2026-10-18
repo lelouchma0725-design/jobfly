@@ -175,8 +175,7 @@ def get_document(user: CurrentUser, db: DB, doc_id: str) -> dict:
         "doc_type": row["doc_type"],
         "mime": row["mime"],
         "parse_status": row["parse_status"],
-        "url": object_url(row["storage_path"]) if settings.r2_public_base_url
-        else presigned_url(row["storage_path"]),
+        "url": object_url(row["storage_path"]),
     }
 
 
