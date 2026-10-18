@@ -53,6 +53,13 @@ export async function signIn(email: string, password: string): Promise<AuthSessi
   );
   const session = { access_token: data.access_token, refresh_token: data.refresh_token, user: data.user };
   saveSession(session);
+  // 隱私第二層：派生 E2EE 密鑰（僅 sessionStorage，關閉瀏覽器即清）
+  try {
+    const { deriveKeyB64, setKeyB64 } = await import("./crypto");
+    setKeyB64(await deriveKeyB64(password, `jobfly:${email}`));
+  } catch {
+    /* 不支持 WebCrypto 時降級 */
+  }
   return session;
 }
 

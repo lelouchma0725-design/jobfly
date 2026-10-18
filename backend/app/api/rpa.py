@@ -40,24 +40,39 @@ class ScrapeRequest(BaseModel):
 
 @router.post("/scrape")
 def scrape(user: CurrentUser, db: DB, payload: ScrapeRequest) -> dict:
-    """官網簡歷回傳：字段寫入元信息表（source=website）+ 存快照供校驗。"""
+    """官網簡歷回傳：字段寫入元信息表（敏感字段只存密文+掩碼）+ 存快照供校驗。"""
+    from app.api.info_fields import SENSITIVE_KEY_RE, _mask_value
+
     fields = [f for f in payload.fields if (f.get("label") or "").strip() and str(f.get("value") or "").strip()]
+    # 快照中的敏感值同樣打碼（快照不落明文）
+    safe_fields = [
+        {**f, "value": _mask_value(str(f["value"])) if SENSITIVE_KEY_RE.search(f.get("label", "")) else f["value"]}
+        for f in fields
+    ]
     db.execute(
         text(
             "INSERT INTO rpa_scrapes (user_id, site, page_type, data) "
             "VALUES (:u, :s, :pt, CAST(:d AS jsonb))"
         ),
         {"u": user["id"], "s": payload.site[:100], "pt": payload.page_type[:100],
-         "d": j(fields)},
+         "d": j(safe_fields)},
     )
     for f in fields:
+        key = f["label"].strip()[:100]
+        value = str(f["value"]).strip()[:2000]
+        sensitive = bool(SENSITIVE_KEY_RE.search(key))
+        enc = f.get("encrypted") or None
+        store_value = value if not sensitive else (_mask_value(value) if not enc else _mask_value(value))
         db.execute(
             text(
-                "INSERT INTO user_info_fields (user_id, key, value, source) VALUES (:u,:k,:v,'website') "
+                "INSERT INTO user_info_fields (user_id, key, value, sensitive_enc, source) "
+                "VALUES (:u,:k,:v,:enc,'website') "
                 "ON CONFLICT (user_id, key) DO UPDATE SET value=EXCLUDED.value, "
+                "sensitive_enc=COALESCE(EXCLUDED.sensitive_enc, user_info_fields.sensitive_enc), "
                 "source='website', updated_at=now()"
             ),
-            {"u": user["id"], "k": f["label"].strip()[:100], "v": str(f["value"]).strip()[:2000]},
+            {"u": user["id"], "k": key, "v": store_value,
+             "enc": (enc[:4000] if enc else None)},
         )
     db.commit()
     return {"ok": True, "saved": len(fields)}
@@ -65,12 +80,13 @@ def scrape(user: CurrentUser, db: DB, payload: ScrapeRequest) -> dict:
 
 @router.get("/fields")
 def rpa_fields(user: CurrentUser, db: DB) -> list[dict]:
-    """RPA 填報用：全部元信息字段（label+value）。"""
+    """RPA 填報用：全部元信息字段（label+value+密文，密文由擴展本地解密）。"""
     rows = db.execute(
-        text("SELECT key, value, source FROM user_info_fields WHERE user_id=:u ORDER BY updated_at DESC LIMIT 300"),
+        text("SELECT key, value, sensitive_enc, source FROM user_info_fields WHERE user_id=:u ORDER BY updated_at DESC LIMIT 300"),
         {"u": user["id"]},
     ).mappings().all()
-    return [{"label": r["key"], "value": r["value"], "source": r["source"]} for r in rows]
+    return [{"label": r["key"], "value": r["value"], "source": r["source"],
+             "encrypted": r["sensitive_enc"]} for r in rows]
 
 
 class VerifyRequest(BaseModel):
@@ -101,8 +117,16 @@ def verify(user: CurrentUser, db: DB, payload: VerifyRequest) -> dict:
         ).mappings().first()
     if not snap:
         return {"ok": False, "error": "沒有可對比的歷史快照（請先回傳一份簡歷）"}
+    from app.api.info_fields import SENSITIVE_KEY_RE, _mask_value
+
     base = {_norm(f["label"]): str(f["value"]).strip() for f in (loads_json(snap["data"]) if isinstance(snap["data"], str) else snap["data"])}
-    cur = {_norm(f["label"]): str(f["value"]).strip() for f in payload.fields if f.get("label")}
+    cur = {
+        _norm(f["label"]): (
+            _mask_value(str(f["value"]).strip())
+            if SENSITIVE_KEY_RE.search(f.get("label", "")) else str(f["value"]).strip()
+        )
+        for f in payload.fields if f.get("label")
+    }
     same, diff, missing = [], [], []
     for k, v in base.items():
         if k in cur:

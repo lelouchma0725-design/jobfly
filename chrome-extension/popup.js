@@ -1,5 +1,46 @@
 const $ = (id) => document.getElementById(id);
 
+/* ── E2EE 密鑰（隱私第二層）：PBKDF2(密碼, 郵箱) → AES-GCM ── */
+const _b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const _unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+
+async function deriveKeyB64(password, salt) {
+  const enc = new TextEncoder();
+  const base = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
+  const key = await crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt: enc.encode(salt), iterations: 100000, hash: "SHA-256" },
+    base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"],
+  );
+  const raw = await crypto.subtle.exportKey("raw", key);
+  return _b64(raw);
+}
+
+async function encryptText(keyB64, text) {
+  const key = await crypto.subtle.importKey("raw", _unb64(keyB64), "AES-GCM", false, ["encrypt"]);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(text));
+  return _b64(iv) + "|" + _b64(ct);
+}
+
+async function decryptText(keyB64, data) {
+  if (!data || !data.includes("|")) return null;
+  try {
+    const [ivS, ctS] = data.split("|");
+    const key = await crypto.subtle.importKey("raw", _unb64(keyB64), "AES-GCM", false, ["decrypt"]);
+    const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: _unb64(ivS) }, key, _unb64(ctS));
+    return new TextDecoder().decode(pt);
+  } catch {
+    return null;
+  }
+}
+
+const SENSITIVE_RE = /證件|证件|身份證|身份证|護照|护照|家庭|親屬|亲属|緊急聯繫|紧急联系|證件號|证件号|地址|邮编|郵編|電話|电话|手機|手机|姓名拼音/;
+
+async function getKeyB64() {
+  const st = await chrome.storage.session.get("rawKeyB64");
+  return st.rawKeyB64 || null;
+}
+
 const SITE_RE = /citics\.com|gtht\.com|greenhouse\.io|lever\.co/;
 
 function showLogin() {
@@ -20,12 +61,18 @@ chrome.storage.local.get("token").then(({ token }) => {
 
 $("signin").addEventListener("click", async () => {
   $("status").textContent = "登錄中…";
+  const email = $("email").value.trim();
+  const password = $("password").value;
   const r = await chrome.runtime.sendMessage({
     type: "SIGNIN",
-    email: $("email").value.trim(),
-    password: $("password").value,
+    email,
+    password,
   });
   if (r && r.ok) {
+    // 派生 E2EE 密鑰（僅存瀏覽器 session，關閉瀏覽器即清除）
+    const keyB64 = await deriveKeyB64(password, "jobfly:" + email);
+    await chrome.storage.session.set({ rawKeyB64: keyB64 });
+    $("password").value = "";
     showTasks();
   } else {
     $("status").textContent = "登錄失敗: " + (r?.error || "未知錯誤");
@@ -183,10 +230,22 @@ async function runAction(type, extra) {
       const pageType = $("pageType").value;
       const r = await bg("RPA_FIELDS", {});
       if (!r || !r.ok) throw new Error("讀取元信息失敗: " + (r?.error || ""));
+      // 敏感字段本地解密
+      const keyB64 = await getKeyB64();
+      let entries = r.fields || [];
+      if (keyB64) {
+        entries = await Promise.all(entries.map(async (e) => {
+          if (e.encrypted) {
+            const pt = await decryptText(keyB64, e.encrypted);
+            if (pt != null) return { ...e, value: pt };
+          }
+          return e;
+        }));
+      }
       const frames = await inject(
         tab,
-        (entries) => window.__jrpa_sync__.fill(entries),
-        [r.fields],
+        (ents) => window.__jrpa_sync__.fill(ents),
+        [entries],
       );
       let filled = 0;
       const skipped = [];
