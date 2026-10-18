@@ -1,7 +1,22 @@
 /** JobsComing RPA 填報引擎 — 在已登錄的官網申請頁上自動填寫全部欄位。 */
 (() => {
-  if (window.__jobsfly_rpa__) return;
-  window.__jobsfly_rpa__ = true;
+  // 版本化標記：新版可覆蓋舊版內容腳本（防重複標記按版本區分）
+  const GUARD = "__jobsfly_rpa_v2__";
+  if (window[GUARD]) return;
+  window[GUARD] = true;
+
+  /** 從網址自動識別中信簡歷類型（name=xiaozhao-cn 等） */
+  function detectPageType() {
+    const u = new URL(location.href);
+    const name = u.searchParams.get("name") || "";
+    const map = {
+      "xiaozhao-cn": "校園招聘簡歷",
+      "xiaozhao-fz": "分支校園招聘簡歷",
+      "shezhao-cn": "社會招聘簡歷",
+      "shezhao-fz": "分支社會招聘簡歷",
+    };
+    return map[name] || "";
+  }
 
   let panel = null;
 
@@ -153,13 +168,19 @@
       }
       // ── 簡歷維護助手：回傳 / 填報 / 校驗 ──
       if (msg.type === "SCRAPE") {
+        const pageType = msg.pageType || detectPageType();
+        if (!pageType) {
+          alert("無法從網址識別簡歷類型，請在擴展面板手動選擇簡歷類型");
+          sendResponse({ ok: false });
+          return;
+        }
         const fields = collectFields()
           .filter((f) => !f.isFile)
           .map((f) => ({ label: f.label, value: f.el.value || "" }));
         const r = await chrome.runtime.sendMessage({
           type: "SCRAPE_SAVE",
           site: location.hostname,
-          pageType: msg.pageType,
+          pageType,
           fields,
         });
         showPanel(`回傳「${msg.pageType}」`);
@@ -198,13 +219,14 @@
         return;
       }
       if (msg.type === "VERIFY") {
+        const pageType = msg.pageType || detectPageType() || "當前頁面";
         const fields = collectFields()
           .filter((f) => !f.isFile)
           .map((f) => ({ label: f.label, value: f.el.value || "" }));
         const r = await chrome.runtime.sendMessage({
           type: "RPA_VERIFY",
           site: location.hostname,
-          pageType: msg.pageType,
+          pageType,
           compareWith: msg.compareWith,
           fields,
         });
