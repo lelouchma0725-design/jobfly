@@ -90,9 +90,16 @@ export default function Tasks() {
               </h3>
               <p>{t.question}</p>
               {["citics_manual", "manual_citics_login"].includes(t.task_type) && (
-                <button className="ghost" onClick={() => void fillPlan(t)}>
-                  📋 一鍵複製填寫方案（按官網要求整理好的答案）
-                </button>
+                <>
+                  <p className="muted">
+                    🤖 推薦使用 RPA 填報助手（Chrome 擴展）：在官網登錄並打開申請頁後，點擴展「開始填報此頁」
+                    即可自動填寫全部欄位+上傳簡歷，你只需檢查並點提交。
+                    安裝：chrome://extensions → 開發者模式 → 載入未封裝項目 → 選擇項目 chrome-extension/ 目錄。
+                  </p>
+                  <button className="ghost" onClick={() => void fillPlan(t)}>
+                    📋 一鍵複製填寫方案（備用）
+                  </button>
+                </>
               )}
               <div className="column">
                 {Object.entries(t.options ?? {}).map(([key, opt]) => (

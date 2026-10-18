@@ -61,8 +61,31 @@ def task_fill_plan(user: CurrentUser, db: DB, task_id: str) -> dict:
         "教育（複製到教育欄）": "；".join(edu_lines) or "（未填）",
     }
     text_block = "\n".join(f"{k}：{v}" for k, v in fields.items())
-    return {"fields": fields, "copy_text": text_block, "company": app["company_name"],
-            "title": app["title"]}
+    # 機器可讀字段（RPA 擴展用）+ 簡歷文件（供 RPA 上傳）
+    machine_fields = [
+        {"key": "name", "label": "姓名", "value": payload.get("full_name") or ""},
+        {"key": "phone", "label": "手機", "value": payload.get("phone") or ""},
+        {"key": "email", "label": "郵箱", "value": payload.get("email") or ""},
+        {"key": "visa", "label": "簽證", "value": payload.get("visa_status") or ""},
+        {"key": "salary", "label": "薪資", "value": payload.get("salary_expectation") or ""},
+        {"key": "availability", "label": "到崗", "value": payload.get("availability") or ""},
+        {"key": "skills", "label": "技能", "value": skills},
+        {"key": "experience", "label": "經歷", "value": "\n".join(exp_lines)},
+        {"key": "education", "label": "教育", "value": "；".join(edu_lines)},
+    ]
+    resume = None
+    rf = payload.get("resume_file")
+    if rf:
+        from app.config import settings
+        from app.core.r2 import object_url, presigned_url
+
+        url = object_url(rf.get("storage_path")) if settings.r2_public_base_url \
+            else presigned_url(rf.get("storage_path"))
+        resume = {"name": rf.get("name"), "storage_path": rf.get("storage_path"),
+                  "download_url": url}
+    return {"fields": fields, "copy_text": text_block, "machine_fields": machine_fields,
+            "resume": resume, "company": app["company_name"], "title": app["title"],
+            "apply_url": app.get("apply_url")}
 
 
 @router.get("")
