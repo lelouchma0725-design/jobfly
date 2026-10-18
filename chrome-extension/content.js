@@ -399,3 +399,65 @@
     return true;
   };
 })();
+
+  /** 同步 API：popup 直接注入調用，頁面側無任何異步等待。 */
+  function syncCollect() {
+    return collectFields()
+      .filter((f) => !f.isFile)
+      .map((f) => ({ label: f.label, value: f.el.value || "" }));
+  }
+
+  async function syncFill(entries) {
+    const fields = collectFields();
+    let filled = 0;
+    const skipped = [];
+    for (const f of fields) {
+      if (f.isFile) continue;
+      if (!f.label) continue;
+      const best = entries
+        .map((m) => ({ m, s: matchScore(f.label, m) }))
+        .filter((x) => x.s > 0 && x.m.value)
+        .sort((a, b) => b.s - a.s)[0];
+      if (best) {
+        if (await fillValue(f, best.m.value)) filled++;
+      } else {
+        skipped.push(f.label);
+      }
+    }
+    return { filled, skipped };
+  }
+
+  async function syncUploadResume(fileInfo) {
+    const inputs = collectFields().filter((f) => f.isFile).map((f) => f.el);
+    if (!inputs.length) return { uploaded: false, note: "本頁無文件上傳欄位" };
+    if (!fileInfo || !fileInfo.dataUrl) return { uploaded: false, note: "無簡歷文件" };
+    try {
+      const b64 = fileInfo.dataUrl.split(",")[1];
+      const bin = atob(b64);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      const file = new File([arr], fileInfo.name || "resume.pdf", { type: "application/pdf" });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      inputs[0].files = dt.files;
+      inputs[0].dispatchEvent(new Event("change", { bubbles: true }));
+      inputs[0].style.outline = "2px solid #16a34a";
+      return { uploaded: true, name: file.name };
+    } catch (e) {
+      return { uploaded: false, note: String(e) };
+    }
+  }
+
+  function syncPanel(title, lines) {
+    showPanel(title);
+    for (const l of lines) log(l.text, l.ok);
+  }
+
+  window.__jrpa_sync__ = {
+    collect: syncCollect,
+    fill: syncFill,
+    upload: syncUploadResume,
+    panel: syncPanel,
+    detectPageType,
+  };
+
