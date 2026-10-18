@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
     accounts, admin, applications, auth, chat, companies, documents, info_fields,
-    jobs, matches, me, profile, tasks,
+    jobs, matches, me, profile, rpa, tasks,
 )
 from app.config import settings
 
@@ -63,6 +63,7 @@ app.include_router(tasks.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
 app.include_router(info_fields.router, prefix="/api")
+app.include_router(rpa.router, prefix="/api")
 
 
 if settings.debug_500 == "1":

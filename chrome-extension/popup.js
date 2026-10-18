@@ -21,6 +21,33 @@ $("signin").addEventListener("click", async () => {
 
 $("refresh").addEventListener("click", loadTasks);
 
+function sendToTab(type, extra = {}) {
+  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+    chrome.tabs.sendMessage(tab.id, { type, ...extra }, (resp) => {
+      if (chrome.runtime.lastError || !resp) {
+        $("status").textContent = "請先打開官網的簡歷/申請頁面再操作";
+        $("status").className = "err";
+      }
+    });
+  });
+}
+
+$("scrape").addEventListener("click", () => {
+  $("status").textContent = "回傳中…（請看頁面右下角面板日誌）";
+  sendToTab("SCRAPE", { pageType: $("pageType").value });
+});
+$("fillResume").addEventListener("click", () => {
+  $("status").textContent = "填報中…（請看頁面右下角面板日誌）";
+  sendToTab("FILL_RESUME", { pageType: $("pageType").value });
+});
+$("verify").addEventListener("click", () => {
+  $("status").textContent = "校驗中…（請看頁面右下角面板日誌）";
+  sendToTab("VERIFY", {
+    pageType: $("pageType").value,
+    compareWith: $("compareWith").value,
+  });
+});
+
 async function showTasks() {
   $("loginBox").style.display = "none";
   $("taskBox").style.display = "block";

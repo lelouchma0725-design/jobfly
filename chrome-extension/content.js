@@ -146,7 +146,81 @@
   }
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    if (msg.type !== "FILL") return;
+    (async () => {
+      // ── 簡歷維護助手：回傳 / 填報 / 校驗 ──
+      if (msg.type === "SCRAPE") {
+        const fields = collectFields()
+          .filter((f) => !f.isFile)
+          .map((f) => ({ label: f.label, value: f.el.value || "" }));
+        const r = await chrome.runtime.sendMessage({
+          type: "SCRAPE_SAVE",
+          site: location.hostname,
+          pageType: msg.pageType,
+          fields,
+        });
+        showPanel(`回傳「${msg.pageType}」`);
+        if (r && r.ok) log(`✅ 已回傳 ${r.out.saved} 個字段到元信息表`, true);
+        else log("回傳失敗: " + (r?.error || ""), false);
+        sendResponse({ ok: true });
+        return;
+      }
+      if (msg.type === "FILL_RESUME") {
+        const r = await chrome.runtime.sendMessage({ type: "RPA_FIELDS" });
+        if (!r || !r.ok) {
+          alert("讀取元信息失敗: " + (r?.error || ""));
+          sendResponse({ ok: false });
+          return;
+        }
+        showPanel(`填報「${msg.pageType}」`);
+        const fields = collectFields();
+        let filled = 0;
+        const skipped = [];
+        for (const f of fields) {
+          if (f.isFile) continue;
+          if (!f.label) continue;
+          const best = r.fields
+            .map((m) => ({ m, s: matchScore(f.label, m) }))
+            .filter((x) => x.s > 0 && x.m.value)
+            .sort((a, b) => b.s - a.s)[0];
+          if (best) {
+            if (await fillValue(f, best.m.value)) filled++;
+          } else {
+            skipped.push(f.label);
+          }
+        }
+        log(`✅ 已填寫 ${filled} 個欄位`, true);
+        if (skipped.length) log("未匹配（需手動填）: " + skipped.slice(0, 12).join("、"), false);
+        sendResponse({ ok: true, filled });
+        return;
+      }
+      if (msg.type === "VERIFY") {
+        const fields = collectFields()
+          .filter((f) => !f.isFile)
+          .map((f) => ({ label: f.label, value: f.el.value || "" }));
+        const r = await chrome.runtime.sendMessage({
+          type: "RPA_VERIFY",
+          site: location.hostname,
+          pageType: msg.pageType,
+          compareWith: msg.compareWith,
+          fields,
+        });
+        showPanel(`校驗「${msg.pageType}」`);
+        if (r && r.ok && r.out.ok) {
+          log(r.out.summary, true);
+          for (const d of r.out["不一致"] || []) {
+            log(`⚠️ ${d.label}: 已存「${d.base}」≠ 當前「${d.current}」`, false);
+          }
+          for (const m of r.out["缺失"] || []) {
+            log(`❌ 缺失: ${m.label}（已存值「${m.base}」未填入）`, false);
+          }
+        } else {
+          log("校驗失敗: " + ((r && r.out && r.out.error) || r?.error || ""), false);
+        }
+        sendResponse({ ok: true });
+        return;
+      }
+      // ── 申請頁填報（原有流程）──
+      if (msg.type !== "FILL") return;
     (async () => {
       const taskId = msg.taskId;
       window.__jobsfly_task__ = taskId;

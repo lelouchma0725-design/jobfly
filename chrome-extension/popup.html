@@ -25,12 +25,34 @@
     <button id="signin" class="primary">登錄</button>
   </div>
   <div id="taskBox" style="display: none">
+    <h3 style="font-size:13px;margin:10px 0 4px">📄 簡歷維護助手（中信等需先維護簡歷的站點）</h3>
+    <p class="muted">
+      流程：官網「我的申請」打開某份簡歷頁 → ①回傳此頁簡歷資料（存元信息）→ 打開另一份簡歷頁 →
+      ②用元信息填報此頁 → ③校驗兩份簡歷一致性。
+    </p>
+    <select id="pageType" style="width:100%;padding:6px;margin:4px 0">
+      <option value="校園招聘簡歷">校園招聘簡歷</option>
+      <option value="社會招聘簡歷">社會招聘簡歷</option>
+      <option value="分支校園招聘簡歷">分支校園招聘簡歷</option>
+      <option value="分支社會招聘簡歷">分支社會招聘簡歷</option>
+    </select>
+    <select id="compareWith" style="width:100%;padding:6px;margin:4px 0">
+      <option value="">校驗對象：自動（最近一份其他簡歷）</option>
+      <option value="校園招聘簡歷">校園招聘簡歷</option>
+      <option value="社會招聘簡歷">社會招聘簡歷</option>
+      <option value="分支校園招聘簡歷">分支校園招聘簡歷</option>
+      <option value="分支社會招聘簡歷">分支社會招聘簡歷</option>
+    </select>
+    <button id="scrape" class="ghost">① 回傳此頁簡歷資料</button>
+    <button id="fillResume" class="ghost">② 用元信息填報此頁</button>
+    <button id="verify" class="ghost">③ 校驗簡歷一致性</button>
+    <h3 style="font-size:13px;margin:10px 0 4px">🎯 投遞任務</h3>
     <div id="tasks"></div>
     <button id="refresh" class="ghost">刷新任務</button>
     <div id="status"></div>
     <p class="muted">
-      用法：先在官網登錄並打開崗位申請頁 → 回到本面板點「開始填報」→ 表單自動填充並高亮，
-      你只需檢查並點「提交」。
+      申請頁填報用法：先在官網登錄並打開崗位申請頁 → 面板點對應任務的「開始填報」→
+      表單自動填充並高亮，你只需檢查並點「提交」。
     </p>
   </div>
   <script src="popup.js"></script>

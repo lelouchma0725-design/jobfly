@@ -83,11 +83,14 @@ class CiticsApplyAdapter:
             f"工作經歷：\n" + ("\n".join(exp_lines) or "（未填）") + "\n"
             f"教育：{'；'.join(edu_lines) or '（未填）'}"
         )
+        from app.api.rpa import required_resume_for
+
+        tab = (raw.get("tab") or "") if isinstance(raw, dict) else ""
+        resume_type = required_resume_for("citics", tab) or "對應簡歷"
         question = (
-            f"中信證券「{job_title}」{direction_note}需要你在官網完成登錄與申請"
-            "（服務端無法通過圖形驗證碼，這一步只能由你本人完成）：\n"
-            f"1. 打開 {apply_url} 用手機號登錄（圖形驗證 + 短信碼）\n"
-            f"2. 在列表中找到「{job_title}」並完成申請\n"
+            f"中信證券「{job_title}」{direction_note}的投遞流程（智能判斷）：\n"
+            "1. 先在官網「我的申請」維護【" + resume_type + "】（已維護可跳過；可用 RPA 助手一鍵回傳/填報/校驗）\n"
+            f"2. 打開 {apply_url} 登錄後直接申請（簡歷已維護則無需再填個人信息）\n"
             "3. 完成後回到這裡勾選確認（如有申請編號請填寫）\n"
             f"{fill_block}\n"
             "（系統將記錄為已投遞·人工確認；今後同公司投遞會再次嘗試自動化）"
