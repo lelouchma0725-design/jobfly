@@ -1,6 +1,20 @@
 /** JobsComing RPA 填報助手 — service worker（代持 API 請求，繞過 CORS）。 */
 const API_BASE = "https://jobscoming-backend.onrender.com";
 
+function withTimeout(ms) {
+  return new AbortController();
+}
+
+async function timedFetch(url, opts, ms) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 async function apiFetch(path, options = {}) {
   const { token, refreshToken } = await chrome.storage.local.get(["token", "refreshToken"]);
   const doFetch = (tk) =>
@@ -13,7 +27,27 @@ async function apiFetch(path, options = {}) {
       },
     });
 
-  let res = await doFetch(token);
+  // 45 秒超時 + 失敗重試一次（後台冷啟動可能需要時間）
+  let res;
+  try {
+    res = await timedFetch(API_BASE + path, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(options.headers || {}),
+      },
+    }, 45000);
+  } catch {
+    res = await timedFetch(API_BASE + path, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(options.headers || {}),
+      },
+    }, 45000);
+  }
   // 401 → 自動用 refresh token 續期並重試一次
   if (res.status === 401 && refreshToken) {
     try {
@@ -28,7 +62,14 @@ async function apiFetch(path, options = {}) {
           token: data.access_token,
           refreshToken: data.refresh_token || refreshToken,
         });
-        res = await doFetch(data.access_token);
+        res = await timedFetch(API_BASE + path, {
+          ...options,
+          headers: {
+            "Content-Type": "application/json",
+            ...(data.access_token ? { Authorization: `Bearer ${data.access_token}` } : {}),
+            ...(options.headers || {}),
+          },
+        }, 45000);
       }
     } catch {
       /* 續期失敗走下方 AUTH 流程 */
