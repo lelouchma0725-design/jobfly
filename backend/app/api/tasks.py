@@ -76,12 +76,14 @@ def task_fill_plan(user: CurrentUser, db: DB, task_id: str) -> dict:
     resume = None
     rf = payload.get("resume_file")
     if rf:
+        from urllib.parse import unquote
+
         from app.config import settings
         from app.core.r2 import object_url, presigned_url
 
         url = object_url(rf.get("storage_path")) if settings.r2_public_base_url \
             else presigned_url(rf.get("storage_path"))
-        resume = {"name": rf.get("name"), "storage_path": rf.get("storage_path"),
+        resume = {"name": unquote(rf.get("name") or "resume.pdf"), "storage_path": rf.get("storage_path"),
                   "download_url": url}
     return {"fields": fields, "copy_text": text_block, "machine_fields": machine_fields,
             "resume": resume, "company": app["company_name"], "title": app["title"],
