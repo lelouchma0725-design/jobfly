@@ -21,6 +21,25 @@ _client: OpenAI | None = None
 # 進程內用量計數（免費層單進程部署夠用；多進程時以 ai_jobs 表為準）
 USAGE = {"calls": 0, "tokens_in": 0, "tokens_out": 0}
 
+# ── 隱私脫敏（方案 A）：發送 LLM 前對個人敏感信息打碼 ──────────────────
+_PHONE_RE = re.compile(r"(?<!\d)(1[3-9]\d)(\d{4})(\d{4})(?!\d)")
+_IDCARD_RE = re.compile(r"(?<!\d)(\d{6})(\d{8})(\d{3}[\dXx])(?!\d)")
+_EMAIL_RE = re.compile(r"([A-Za-z0-9._%+-])[A-Za-z0-9._%+-]*@([A-Za-z0-9.-]+\.[A-Za-z]{2,})")
+
+
+def mask_pii(text: str) -> str:
+    """脫敏：手機 189****9707、身份證前6後4保留中間打碼、郵箱名打碼。"""
+    if not text:
+        return text
+    text = _PHONE_RE.sub(r"\1****\3", text)
+    text = _IDCARD_RE.sub(r"\1********\3", text)
+    text = _EMAIL_RE.sub(r"\1***@\2", text)
+    return text
+
+
+def _sanitize_messages(messages: list[dict]) -> list[dict]:
+    return [{**m, "content": mask_pii(m.get("content") or "")} for m in messages]
+
 
 def usage() -> dict:
     return dict(USAGE)
@@ -65,7 +84,7 @@ def chat(
         model=model or settings.llm_model,
         messages=[
             {"role": "system", "content": system},
-            {"role": "user", "content": user},
+            {"role": "user", "content": mask_pii(user)},
         ],
         max_tokens=max_tokens,
         temperature=temperature,
@@ -120,7 +139,7 @@ def chat_with_tools(
     tool_executor: callable(name: str, args: dict) -> dict
     返回最終的助手文本回覆。
     """
-    msgs: list[dict] = [{"role": "system", "content": system}, *messages]
+    msgs: list[dict] = [{"role": "system", "content": system}, *(_sanitize_messages(messages))]
     for _ in range(max_iters):
         resp = _get_client().chat.completions.create(
             model=model or settings.llm_model,

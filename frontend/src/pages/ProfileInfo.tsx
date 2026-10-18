@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useT } from "../lib/i18n";
 
-type InfoField = { key: string; value: string; source: string; updated_at: string };
+type InfoField = { key: string; value: string; source: string; updated_at: string; sensitive?: boolean };
 type Full = {
   basic: { full_name: string | null; email: string | null; phone: string | null };
   profile: {
@@ -46,6 +46,12 @@ export default function ProfileInfo() {
   const [newKey, setNewKey] = useState("");
   const [newVal, setNewVal] = useState("");
   const [msg, setMsg] = useState("");
+  const [revealed, setRevealed] = useState<Set<string>>(new Set());
+
+  function mask(v: string) {
+    if (v.length <= 4) return "****";
+    return v.slice(0, 2) + "*".repeat(Math.min(v.length - 4, 8)) + v.slice(-2);
+  }
 
   async function load() {
     try {
@@ -129,8 +135,22 @@ export default function ProfileInfo() {
             <tbody>
               {(data?.info_fields ?? []).map((f) => (
                 <tr key={f.key}>
-                  <td>{KEY_LABELS[f.key] ?? f.key}</td>
-                  <td className="cell-wrap">{f.value}</td>
+                  <td>{KEY_LABELS[f.key] ?? f.key}{f.sensitive ? " 🔒" : ""}</td>
+                  <td className="cell-wrap">
+                    {f.sensitive && !revealed.has(f.key) ? (
+                      <>
+                        <span className="muted">{mask(f.value)}</span>{" "}
+                        <button
+                          className="ghost small"
+                          onClick={() => setRevealed(new Set(revealed).add(f.key))}
+                        >
+                          顯示
+                        </button>
+                      </>
+                    ) : (
+                      f.value
+                    )}
+                  </td>
                   <td className="muted">{SOURCE_TEXT[f.source] ?? f.source}</td>
                   <td>
                     <button className="ghost" onClick={() => void delField(f.key)}>
