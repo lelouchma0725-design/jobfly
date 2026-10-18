@@ -294,13 +294,15 @@
     if (type === "SCRAPE") {
       const pageType = action.pageType || detectPageType();
       if (!pageType) return { ok: false, error: "無法從網址識別簡歷類型，請在擴展面板手動選擇" };
+      showPanel(`回傳「${pageType}」`);
+      log("正在連線 JobsComing 後台…");
       const fields = collectFields()
         .filter((f) => !f.isFile)
         .map((f) => ({ label: f.label, value: f.el.value || "" }));
+      log(`頁面共識別到 ${fields.length} 個填寫欄位`);
       const r = await chrome.runtime.sendMessage({
         type: "SCRAPE_SAVE", site: location.hostname, pageType, fields,
       });
-      showPanel(`回傳「${pageType}」`);
       if (r && r.ok) {
         log(`✅ 已回傳 ${r.out.saved} 個字段到元信息表`, true);
         return { ok: true, saved: r.out.saved };
@@ -309,9 +311,10 @@
       return { ok: false, error: r?.error || "" };
     }
     if (type === "FILL_RESUME") {
+      showPanel(`填報「${action.pageType}」`);
+      log("正在讀取元信息…");
       const r = await chrome.runtime.sendMessage({ type: "RPA_FIELDS" });
       if (!r || !r.ok) return { ok: false, error: "讀取元信息失敗: " + (r?.error || "") };
-      showPanel(`填報「${action.pageType}」`);
       const fields = collectFields();
       let filled = 0;
       const skipped = [];
