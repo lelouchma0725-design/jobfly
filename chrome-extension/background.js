@@ -63,6 +63,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true, dataUrl });
           break;
         }
+        case "SCRAPE_SAVE": {
+          const out = await apiFetch("/api/rpa/scrape", {
+            method: "POST",
+            body: JSON.stringify({ site: msg.site, page_type: msg.pageType, fields: msg.fields }),
+          });
+          sendResponse({ ok: true, out });
+          break;
+        }
+        case "RPA_FIELDS": {
+          const fields = await apiFetch("/api/rpa/fields");
+          sendResponse({ ok: true, fields });
+          break;
+        }
+        case "RPA_VERIFY": {
+          const out = await apiFetch("/api/rpa/verify", {
+            method: "POST",
+            body: JSON.stringify({
+              site: msg.site, page_type: msg.pageType,
+              compare_with: msg.compareWith, fields: msg.fields,
+            }),
+          });
+          sendResponse({ ok: true, out });
+          break;
+        }
         default:
           sendResponse({ ok: false, error: "unknown message" });
       }
