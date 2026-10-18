@@ -383,6 +383,7 @@
 
   /** executeScript 不等待 Promise：同步觸發，結果寫入共享窗口供 popup 輪詢。 */
   window.__jrpa_result__ = null;
+  window.__jrpa_run_v3__ = true; // 版本標記：popup 探測此標記決定是否注入新版
   window.__jrpa_run__ = (action) => {
     window.__jrpa_result__ = null;
     runAction(action)
