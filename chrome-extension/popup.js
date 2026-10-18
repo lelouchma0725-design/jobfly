@@ -46,40 +46,48 @@ async function pickTab() {
   return site[site.length - 1] || active;
 }
 
+/** 確保頁面已加載內容腳本庫（探測 window.__jrpa_run__，缺失則注入）。 */
+async function ensureLibrary(tab) {
+  const probe = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: () => !!window.__jrpa_run__,
+  });
+  if (probe[0] && probe[0].result) return;
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    files: ["content.js"],
+  });
+  await new Promise((r) => setTimeout(r, 300));
+}
+
+/** 直接注入執行操作（不經標籤消息通道，杜絕 Receiving end 錯誤）。 */
+async function runOnTab(action) {
+  const tab = await pickTab();
+  if (!tab || !tab.url || !/^https?:/.test(tab.url)) {
+    throw new Error("請先切換到官網頁面（當前是瀏覽器內部頁面）");
+  }
+  await ensureLibrary(tab);
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: (act) => window.__jrpa_run__(act),
+    args: [action],
+  });
+  return results[0] ? results[0].result : { ok: false, error: "執行無結果" };
+}
+
 function sendToTab(type, extra = {}) {
   (async () => {
-    const tab = await pickTab();
-    if (!tab || !tab.url || !/^https?:/.test(tab.url)) {
-      $("status").textContent = "請先切換到官網頁面（當前是瀏覽器內部頁面，無法操作）";
-      $("status").className = "err";
-      return;
-    }
-    await ensureContent(tab);
+    $("status").textContent = "執行中…（結果顯示在頁面右下角面板）";
     try {
-      const resp = await chrome.tabs.sendMessage(tab.id, { type, ...extra });
-      if (!resp) {
-        $("status").textContent = "頁面腳本無響應：請在官網頁面按 F5 重新整理後再試";
-        $("status").className = "err";
-      }
+      const r = await runOnTab({ type, ...extra });
+      if (r && r.ok) $("status").textContent = "✅ 操作已執行（詳見頁面右下角面板）";
+      else $("status").textContent = "操作未完成: " + (r?.error || "無響應");
+      $("status").className = r && r.ok ? "ok" : "err";
     } catch (e) {
       $("status").textContent = "操作失敗: " + (e?.message || e);
       $("status").className = "err";
     }
   })();
-}
-
-/** 若內容腳本未加載（頁面不在白名單），現場注入後再通訊。 */
-async function ensureContent(tab) {
-  try {
-    await chrome.tabs.sendMessage(tab.id, { type: "PING" });
-  } catch {
-    try {
-      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
-      await new Promise((r) => setTimeout(r, 300)); // 等監聽器註冊
-    } catch (e) {
-      throw new Error("無法注入頁面腳本: " + (e?.message || e));
-    }
-  }
 }
 
 $("scrape").addEventListener("click", () => {
@@ -139,20 +147,8 @@ async function loadTasks() {
     const btn = document.createElement("button");
     btn.className = "primary";
     btn.textContent = "開始填報此頁";
-    btn.addEventListener("click", async () => {
-      const tab = await pickTab();
-      if (!tab || !tab.url || !/^https?:/.test(tab.url)) {
-        $("status").textContent = "請先切換到官網申請頁面";
-        $("status").className = "err";
-        return;
-      }
-      await ensureContent(tab);
-      try {
-        await chrome.tabs.sendMessage(tab.id, { type: "FILL", taskId: t.id });
-      } catch (e) {
-        $("status").textContent = "填報失敗: " + (e?.message || e);
-        $("status").className = "err";
-      }
+    btn.addEventListener("click", () => {
+      sendToTab("FILL", { taskId: t.id });
     });
     div.appendChild(btn);
     box.appendChild(div);
