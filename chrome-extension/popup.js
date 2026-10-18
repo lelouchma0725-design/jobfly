@@ -50,7 +50,7 @@ async function pickTab() {
 async function ensureLibrary(tab) {
   const probe = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    func: () => !!window.__jrpa_run__,
+    func: () => !!(window.__jrpa_run__ && window.__jrpa_run_v3__),
   });
   if (probe[0] && probe[0].result) return;
   await chrome.scripting.executeScript({
