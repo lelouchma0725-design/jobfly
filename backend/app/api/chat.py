@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.collectors.pipeline import collect_for_user
 from app.core.auth import get_current_user
 from app.core.jsonutil import j
-from app.core.llm import chat_with_tools
+from app.core.llm import chat_json, chat_with_tools
 from app.db import SessionLocal, get_db
 
 # 繁→簡 對照（成對排列，索引偶數為繁、奇數為簡）
