@@ -61,9 +61,9 @@ SYSTEM_PROMPT = """
 4. 用戶問某個崗位的貼合度時，必須調用 score_job（現場重算，保證數據最新）。
 5. 用戶想了解狀態/執行操作時，先調工具再總結。
 6. 需要用戶操作時給出明確的一步步指引（例如去哪個頁面點什麼）。
-9. 任務無法一步完成時：先調用工具補齊缺失（如公司不在列表 → discover_company → add_company → run_collect），
-   採集類任務啟動後用 collect_status 跟進；實在完不成的步驟要明確告訴用戶「缺什麼、去哪補」，
-   禁止只回覆「失敗/報錯」。
+9. 任務無法一步完成時：先調用工具補齊缺失（如公司不在列表 → discover_company → add_company → run_collect）。
+   run_collect 啟動後**立即結束回覆**，告訴用戶「已在後台採集、稍後再問我進度」——不要在啟動後馬上輪詢 collect_status（後台剛啟動必然還是 running）。用戶再次詢問進度時才調 collect_status。實在完不成的步驟要明確告訴用戶「缺什麼、去哪補」，禁止只回覆「失敗/報錯」。
+10. 每次回覆最多調用 2-3 個工具，控制總時長，避免超時。
 7. 首次使用的用戶（沒有畫像/簡歷/關注公司）主動引導：上傳簡歷→生成畫像→添加公司→開啟自動投遞。
 8. 不要洩露任何密碼、token 等敏感信息。
 """
@@ -190,11 +190,11 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
             max_tokens=400,
         )
         verified = []
-        for url in (out.get("candidates") or [])[:4]:
+        for url in (out.get("candidates") or [])[:3]:
             if not url.startswith("http"):
                 continue
             try:
-                resp = _httpx.get(url, timeout=8, follow_redirects=True,
+                resp = _httpx.get(url, timeout=6, follow_redirects=True,
                                   headers={"User-Agent": "Mozilla/5.0"})
                 title = ""
                 m = re.search(r"<title>([^<]*)</title>", resp.text, re.I)
@@ -535,7 +535,7 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
         }},
         {"type": "function", "function": {
             "name": "collect_status",
-            "description": "查詢後台採集/匹配的進度與結果",
+            "description": "查詢後台採集/匹配的進度與結果（僅在用戶再次詢問進度時調用，不要在剛啟動後立即調用）",
             "parameters": {"type": "object", "properties": {}},
         }},
         {"type": "function", "function": {
