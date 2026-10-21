@@ -212,3 +212,43 @@ def save_answer(db: Session, user_id: str, key: str, value: str) -> None:
         ),
         {"uid": user_id, "k": key.strip()[:100], "v": value.strip()[:2000]},
     )
+
+class E2EExport(BaseModel):
+    fields: list[dict]  # [{key, sensitive_enc}]
+
+
+@router.get("/export")
+def export_sensitive(user: CurrentUser, db: DB) -> dict:
+    """導出全部敏感字段密文（換設備備份；密鑰仍由密碼持有，文件本身無明文）。"""
+    rows = db.execute(
+        text(
+            "SELECT key, sensitive_enc FROM user_info_fields "
+            "WHERE user_id=:uid AND sensitive_enc IS NOT NULL"
+        ),
+        {"uid": user["id"]},
+    ).mappings().all()
+    return {"fields": [{"key": r["key"], "sensitive_enc": r["sensitive_enc"]} for r in rows],
+            "note": "此文件只含密文；恢復時需用同一密碼派生密鑰"}
+
+
+@router.put("/import")
+def import_sensitive(user: CurrentUser, db: DB, payload: E2EExport) -> dict:
+    """導入敏感字段密文（換設備恢復）。"""
+    n = 0
+    for f in payload.fields:
+        key = str(f.get("key") or "").strip()[:100]
+        enc = str(f.get("sensitive_enc") or "").strip()[:4000]
+        if not key or not enc:
+            continue
+        db.execute(
+            text(
+                "INSERT INTO user_info_fields (user_id, key, value, sensitive_enc, source) "
+                "VALUES (:u, :k, '****', :enc, 'user') "
+                "ON CONFLICT (user_id, key) DO UPDATE "
+                "SET sensitive_enc=EXCLUDED.sensitive_enc, updated_at=now()"
+            ),
+            {"u": user["id"], "k": key, "enc": enc},
+        )
+        n += 1
+    db.commit()
+    return {"ok": True, "imported": n}

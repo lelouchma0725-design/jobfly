@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useT } from "../lib/i18n";
-import { decryptText, encryptText, getKeyB64, SENSITIVE_RE } from "../lib/crypto";
+import { decryptText, deriveKeyB64, encryptText, getKeyB64, setKeyB64 } from "../lib/crypto";
 
 type InfoField = { key: string; value: string; source: string; updated_at: string; sensitive?: boolean; encrypted?: string | null };
 type Full = {
@@ -108,6 +108,83 @@ export default function ProfileInfo() {
     }
   }
 
+  async function rotatePassword() {
+    const oldPw = prompt("請輸入當前密碼（驗證用）");
+    if (!oldPw) return;
+    const newPw = prompt("請輸入新密碼（至少 6 位）");
+    if (!newPw || newPw.length < 6) return setMsg("新密碼太短");
+    setMsg("正在遷移敏感字段密文…");
+    try {
+      const oldKey = getKeyB64();
+      const newKey = oldKey ? await deriveKeyB64(newPw, `jobfly:${data?.basic.email}`) : null;
+      // 1) 後端改密碼（驗證舊密碼）
+      await api("/api/auth/change-password", {
+        method: "POST",
+        body: JSON.stringify({ old_password: oldPw, new_password: newPw }),
+      });
+      // 2) 敏感字段密文遷移：舊密鑰解密 → 新密鑰加密 → 批量重傳
+      if (oldKey && newKey && data) {
+        const fields = [];
+        for (const f of data.info_fields) {
+          if (f.encrypted) {
+            const pt = await decryptText(oldKey, f.encrypted);
+            if (pt != null) {
+              fields.push({ key: f.key, sensitive_enc: await encryptText(newKey, pt) });
+            }
+          }
+        }
+        if (fields.length) {
+          await api("/api/me/info-fields/import", {
+            method: "PUT",
+            body: JSON.stringify({ fields }),
+          });
+        }
+        setKeyB64(newKey);
+      }
+      setMsg("✅ 密碼已更新，敏感字段密文已用新密鑰重新加密");
+    } catch (e) {
+      setMsg(`修改失敗: ${(e as Error).message}`);
+    }
+  }
+
+  async function exportBackup() {
+    try {
+      const r = await api<{ fields: { key: string; sensitive_enc: string }[]; note: string }>(
+        "/api/me/info-fields/export",
+      );
+      const blob = new Blob([JSON.stringify(r, null, 2)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "jobfly-e2ee-backup.json";
+      a.click();
+      setMsg("已導出密文備份文件（只含密文，恢復需同一密碼）");
+    } catch (e) {
+      setMsg(`導出失敗: ${(e as Error).message}`);
+    }
+  }
+
+  async function importBackup() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        const parsed = JSON.parse(await file.text());
+        const r = await api<{ imported: number }>("/api/me/info-fields/import", {
+          method: "PUT",
+          body: JSON.stringify({ fields: parsed.fields || [] }),
+        });
+        setMsg(`✅ 已導入 ${r.imported} 條敏感字段密文`);
+        await load();
+      } catch (e) {
+        setMsg(`導入失敗: ${(e as Error).message}`);
+      }
+    };
+    input.click();
+  }
+
   async function delField(key: string) {
     await api(`/api/me/info-fields/${encodeURIComponent(key)}`, { method: "DELETE" });
     await load();
@@ -131,6 +208,19 @@ export default function ProfileInfo() {
                    onChange={(e) => setBasic({ ...basic, phone: e.target.value })} />
             <input placeholder="郵箱" value={basic.email} disabled />
             <button onClick={() => void saveBasic()}>{t("save")}</button>
+          </div>
+
+          <h3>🔐 安全（E2EE）</h3>
+          <div className="row wrap">
+            <button className="ghost" onClick={() => void rotatePassword()}>
+              修改密碼（自動遷移敏感字段密文）
+            </button>
+            <button className="ghost" onClick={() => void exportBackup()}>
+              導出密文備份（換設備用）
+            </button>
+            <button className="ghost" onClick={() => void importBackup()}>
+              導入密文備份
+            </button>
           </div>
 
           <h3>個人信息庫（投遞時自動互補，無重複單一來源）</h3>
