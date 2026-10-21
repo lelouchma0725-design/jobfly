@@ -62,9 +62,9 @@ def create_applications_from_matches(db: Session, user_id: str) -> dict:
         params["th"] = threshold
     campus_where = ""
     if pref == "society":
-        campus_where = "AND p.is_campus = false"
+        campus_where = "AND p.is_campus = false AND p.is_intern = false"
     elif pref == "campus":
-        campus_where = "AND p.is_campus = true"
+        campus_where = "AND (p.is_campus = true OR p.is_intern = true)"
     result = db.execute(
         text(
             f"""

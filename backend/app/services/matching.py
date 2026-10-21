@@ -168,6 +168,8 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
     ).mappings().first()
     preference = (st["campus_preference"] if st else "both") or "both"
     is_campus = bool(posting.get("is_campus")) or _is_campus_posting(posting)
+    is_intern = bool(posting.get("is_intern"))
+    is_campus = is_campus or is_intern  # 實習同校招職級適配
     years = (dict(profile).get("hard_facts") or {}).get("total_years") or 0
     if is_campus and preference == "society":
         failures.append({

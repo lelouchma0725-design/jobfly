@@ -43,6 +43,10 @@ def list_jobs(
             WHERE p.is_active = true
               AND (CAST(:q AS text) IS NULL OR p.title ILIKE '%'||:q||'%' OR p.description_text ILIKE '%'||:q||'%')
               AND (CAST(:co AS text) IS NULL OR p.company_name ILIKE '%'||:co||'%')
+              AND (CAST(:jt AS text) IS NULL OR
+                   (CAST(:jt AS text)='campus' AND p.is_campus AND NOT p.is_intern)
+                   OR (CAST(:jt AS text)='society' AND NOT p.is_campus AND NOT p.is_intern)
+                   OR (CAST(:jt AS text)='intern' AND p.is_intern))
               AND (CAST(:ca AS text) IS NULL OR (CAST(:ca AS text)='campus' AND p.is_campus)
                    OR (CAST(:ca AS text)='society' AND NOT p.is_campus))
               AND (CAST(:og AS text) IS NULL OR p.org_level = :og)
@@ -51,7 +55,7 @@ def list_jobs(
             """
         ),
         {"uid": user["id"], "q": q, "co": company, "ca": campus, "og": org,
-         "lim": limit, "off": offset},
+         "jt": job_type, "lim": limit, "off": offset},
     ).mappings().all()
     total = db.execute(
         text(
@@ -60,12 +64,16 @@ def list_jobs(
             WHERE p.is_active = true
               AND (CAST(:q AS text) IS NULL OR p.title ILIKE '%'||:q||'%' OR p.description_text ILIKE '%'||:q||'%')
               AND (CAST(:co AS text) IS NULL OR p.company_name ILIKE '%'||:co||'%')
+              AND (CAST(:jt AS text) IS NULL OR
+                   (CAST(:jt AS text)='campus' AND p.is_campus AND NOT p.is_intern)
+                   OR (CAST(:jt AS text)='society' AND NOT p.is_campus AND NOT p.is_intern)
+                   OR (CAST(:jt AS text)='intern' AND p.is_intern))
               AND (CAST(:ca AS text) IS NULL OR (CAST(:ca AS text)='campus' AND p.is_campus)
                    OR (CAST(:ca AS text)='society' AND NOT p.is_campus))
               AND (CAST(:og AS text) IS NULL OR p.org_level = :og)
             """
         ),
-        {"q": q, "co": company, "ca": campus, "og": org},
+        {"q": q, "co": company, "ca": campus, "og": org, "jt": job_type},
     ).mappings().one()["n"]
     return {
         "items": [
@@ -82,6 +90,7 @@ def list_jobs(
                 "match_score": r["match_score"],
                 "priority_score": r["priority_score"],
                 "is_campus": r["is_campus"],
+                "is_intern": r["is_intern"],
                 "org_level": r["org_level"],
                 "match_status": r["match_status"],
                 "match_id": str(r["match_id"]) if r["match_id"] else None,
