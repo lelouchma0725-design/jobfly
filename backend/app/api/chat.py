@@ -669,7 +669,13 @@ def chat(user: CurrentUser, db: DB, payload: ChatRequest) -> dict:
     tools, executor = _build_tools(user["id"], db)
     reply = chat_with_tools(SYSTEM_PROMPT, messages, tools, executor)
     # 問答歷史持久化（存儲不增加 API 成本；恢復會話才會把歷史放回上下文）
-    full = messages + [{"role": "assistant", "content": reply}]
+    # 存儲前脫敏（隱私方案：歷史裡不落敏感明文）
+    from app.core.llm import mask_pii
+
+    full = [
+        {**m, "content": mask_pii(m.get("content") or "")}
+        for m in messages + [{"role": "assistant", "content": reply}]
+    ]
     conv_id = payload.conversation_id
     if conv_id:
         exists = db.execute(

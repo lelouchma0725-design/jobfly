@@ -2,6 +2,6 @@
 
 導入本包即完成各適配器註冊（registry 見 base.py）。
 """
-from app.collectors import citics, greenhouse, gtht, lever, official, workday  # noqa: F401
+from app.collectors import beisen, citics, greenhouse, gtht, lever, official, workday  # noqa: F401
 
-__all__ = ["citics", "greenhouse", "gtht", "lever", "official", "workday"]
+__all__ = ["beisen", "citics", "greenhouse", "gtht", "lever", "official", "workday"]
