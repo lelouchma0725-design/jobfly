@@ -64,6 +64,7 @@ SYSTEM_PROMPT = """
 9. 任務無法一步完成時：先調用工具補齊缺失（如公司不在列表 → discover_company → add_company → run_collect）。
    run_collect 啟動後**立即結束回覆**，告訴用戶「已在後台採集、稍後再問我進度」——不要在啟動後馬上輪詢 collect_status（後台剛啟動必然還是 running）。用戶再次詢問進度時才調 collect_status。實在完不成的步驟要明確告訴用戶「缺什麼、去哪補」，禁止只回覆「失敗/報錯」。
 10. 每次回覆最多調用 2-3 個工具，控制總時長，避免超時。
+11. 用戶問「分數為什麼變了/以前是X分現在是Y分」時，直接引用 score_job 返回的「分數變化解釋」回答，不要現場重算。
 7. 首次使用的用戶（沒有畫像/簡歷/關注公司）主動引導：上傳簡歷→生成畫像→添加公司→開啟自動投遞。
 8. 不要洩露任何密碼、token 等敏感信息。
 """
@@ -391,14 +392,29 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
         ), params).mappings().first()
         if not row:
             return {"error": "未找到該崗位，可先 run_collect 採集"}
-        from app.services.matching import score_posting
-
-        result = score_posting(db, user_id, str(row["id"]))
+        # 快讀模式：返回已存分數與構成（不現場重評，避免超時）
+        m = db.execute(text(
+            """
+            SELECT m.match_score, m.priority_score, m.score_breakdown, m.direction_scores,
+                   m.hard_failures, m.reasons, m.updated_at
+            FROM job_matches m
+            WHERE m.user_id=:u AND m.posting_id=:p
+            """
+        ), {"u": user_id, "p": str(row["id"])}).mappings().first()
+        if not m:
+            return {"error": "該崗位尚未匹配，請先重新匹配"}
         return {
             "崗位": f"{row['company_name']} · {row['title']}",
-            "最新貼合度": result.get("match_score"),
-            "硬性條件": result.get("hard_failures"),
-            "地點調整": result.get("location_adjust"),
+            "當前貼合度": m["match_score"],
+            "優先級": m["priority_score"],
+            "構成": m["score_breakdown"] or {},
+            "方向分數": m["direction_scores"] or [],
+            "硬性條件": m["hard_failures"] or [],
+            "評分時間": m["updated_at"].isoformat() if m["updated_at"] else None,
+            "分數變化解釋": "系統規則曾演進：舊版貼合度混合了地區加權等偏好項；"
+                            "現版貼合度=純個人條件匹配（地區/校招職級/總部分支偏好單獨計入「優先級」），"
+                            "多方向崗位取最高方向分。因此新舊分數不可直接比較，變化不代表你的簡歷變差。"
+                            "如需現場重算，請到「匹配與崗位」點重新匹配。",
         }
 
     def update_basic_info(args: dict) -> dict:
@@ -598,7 +614,7 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
         }},
         {"type": "function", "function": {
             "name": "score_job",
-            "description": "對指定崗位用當前畫像現場重算貼合度（用戶問某個崗位貼合度時調用，保證數據最新）",
+            "description": "查詢指定崗位的貼合度與構成（快讀數據庫，不現場重算；用戶問分數為什麼變化時也用它，含規則演進說明）",
             "parameters": {"type": "object", "properties": {
                 "keyword": {"type": "string", "description": "職位關鍵詞"},
                 "company": {"type": "string", "description": "公司名（可選）"},
