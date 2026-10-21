@@ -195,6 +195,7 @@ def list_matches(
     company: str | None = None,
     limit: int = 20, offset: int = 0,
     campus: str | None = None, org: str | None = None,
+    job_type: str | None = None,
 ) -> dict:
     limit = min(max(limit, 1), 100)
     rows = db.execute(
@@ -202,12 +203,16 @@ def list_matches(
             """
             SELECT m.id, m.posting_id, m.match_score, m.priority_score, m.hard_failures,
                    m.reasons, m.score_breakdown, m.direction_scores, m.status,
-                   p.company_name, p.title, p.location, p.department, p.is_campus,
+                   p.company_name, p.title, p.location, p.department, p.is_campus, p.is_intern,
                    p.org_level, p.apply_url, p.first_seen_at, p.raw->'directions' AS directions
             FROM job_matches m
             JOIN job_postings p ON p.id = m.posting_id
             WHERE m.user_id = :uid AND (CAST(:st AS text) IS NULL OR CAST(m.status AS text) = :st)
               AND (CAST(:co AS text) IS NULL OR p.company_name ILIKE '%'||:co||'%')
+              AND (CAST(:jt AS text) IS NULL OR
+                   (CAST(:jt AS text)='campus' AND p.is_campus AND NOT p.is_intern)
+                   OR (CAST(:jt AS text)='society' AND NOT p.is_campus AND NOT p.is_intern)
+                   OR (CAST(:jt AS text)='intern' AND p.is_intern))
               AND (CAST(:ca AS text) IS NULL OR (CAST(:ca AS text)='campus' AND p.is_campus)
                    OR (CAST(:ca AS text)='society' AND NOT p.is_campus))
               AND (CAST(:og AS text) IS NULL OR p.org_level = :og)
@@ -217,7 +222,7 @@ def list_matches(
             """
         ),
         {"uid": user["id"], "st": status, "co": company, "ca": campus, "og": org,
-         "lim": limit, "off": offset},
+         "jt": job_type, "lim": limit, "off": offset},
     ).mappings().all()
     total = db.execute(
         text(
@@ -226,12 +231,16 @@ def list_matches(
             JOIN job_postings p ON p.id = m.posting_id
             WHERE m.user_id = :uid AND (CAST(:st AS text) IS NULL OR CAST(m.status AS text) = :st)
               AND (CAST(:co AS text) IS NULL OR p.company_name ILIKE '%'||:co||'%')
+              AND (CAST(:jt AS text) IS NULL OR
+                   (CAST(:jt AS text)='campus' AND p.is_campus AND NOT p.is_intern)
+                   OR (CAST(:jt AS text)='society' AND NOT p.is_campus AND NOT p.is_intern)
+                   OR (CAST(:jt AS text)='intern' AND p.is_intern))
               AND (CAST(:ca AS text) IS NULL OR (CAST(:ca AS text)='campus' AND p.is_campus)
                    OR (CAST(:ca AS text)='society' AND NOT p.is_campus))
               AND (CAST(:og AS text) IS NULL OR p.org_level = :og)
             """
         ),
-        {"uid": user["id"], "st": status, "co": company, "ca": campus, "og": org},
+        {"uid": user["id"], "st": status, "co": company, "ca": campus, "og": org, "jt": job_type},
     ).mappings().one()["n"]
     return {
         "items": [
@@ -241,6 +250,7 @@ def list_matches(
                 "match_score": r["match_score"],
                 "priority_score": r["priority_score"],
                 "is_campus": r["is_campus"],
+                "is_intern": r["is_intern"],
                 "org_level": r["org_level"],
                 "department": r["department"],
                 "directions": loads_json(r["directions"])

@@ -15,6 +15,7 @@ type Job = {
   match_score: number | null;
   match_status: string | null;
   is_campus: boolean;
+  is_intern?: boolean;
   org_level: string;
 };
 
@@ -47,7 +48,7 @@ export default function Jobs() {
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     if (q) params.set("q", q);
     if (company) params.set("company", company);
-    if (campus) params.set("campus", campus);
+    if (campus) params.set("job_type", campus);
     if (org) params.set("org", org);
     try {
       const res = await api<{ items: Job[]; total: number }>(`/api/jobs?${params}`);
@@ -153,9 +154,10 @@ export default function Jobs() {
               value={campus}
               onChange={(e) => setCampus(e.target.value)}
             >
-              <option value="">校招/社招：全部</option>
+              <option value="">類型：全部</option>
               <option value="campus">僅校招</option>
               <option value="society">僅社招</option>
+              <option value="intern">僅實習</option>
             </select>
             <select
               value={org}
@@ -193,7 +195,7 @@ export default function Jobs() {
                   <td>{j.company_name}</td>
                   <td>{j.title}</td>
                   <td>{j.location ?? "-"}</td>
-                  <td>{j.is_campus ? "校招" : "社招"} · {j.org_level === "headquarter" ? "總部" : j.org_level === "branch" ? "分支" : "—"}</td>
+                  <td>{j.is_intern ? "實習" : j.is_campus ? "校招" : "社招"} · {j.org_level === "headquarter" ? "總部" : j.org_level === "branch" ? "分支" : "—"}</td>
                   <td className="muted">{j.department ?? "—"}</td>
                   <td>{j.source}</td>
                   <td>

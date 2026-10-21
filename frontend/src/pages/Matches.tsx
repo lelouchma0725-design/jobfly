@@ -9,6 +9,7 @@ type Match = {
   match_score: number | null;
   priority_score: number | null;
   is_campus: boolean;
+  is_intern?: boolean;
   org_level: string;
   department: string | null;
   directions: string[];
@@ -81,7 +82,7 @@ export default function Matches() {
   async function load() {
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     if (status) params.set("status", status);
-    if (campus) params.set("campus", campus);
+    if (campus) params.set("job_type", campus);
     if (org) params.set("org", org);
     if (company) params.set("company", company);
     try {
@@ -158,9 +159,10 @@ export default function Matches() {
                 setOffset(0);
               }}
             >
-              <option value="">校招/社招：全部</option>
+              <option value="">類型：全部</option>
               <option value="campus">僅校招</option>
               <option value="society">僅社招</option>
+              <option value="intern">僅實習</option>
             </select>
             <select
               value={org}
@@ -227,7 +229,7 @@ export default function Matches() {
                     <td>{m.company_name}</td>
                     <td>{m.title}</td>
                     <td>
-                      {m.is_campus ? "校招" : "社招"} · {ORG_TEXT[m.org_level] ?? m.org_level}
+                      {m.is_intern ? "實習" : m.is_campus ? "校招" : "社招"} · {ORG_TEXT[m.org_level] ?? m.org_level}
                     </td>
                     <td className="muted">{m.department ?? "—"}</td>
                     <td>

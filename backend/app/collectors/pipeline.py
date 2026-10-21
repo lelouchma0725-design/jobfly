@@ -68,6 +68,15 @@ def _org_level(p: base.JobPosting) -> str:
     return "unknown"
 
 
+def _is_intern_posting(p: base.JobPosting) -> bool:
+    """實習判定：raw 標記 > 標題/標籤關鍵詞。"""
+    if p.raw.get("is_intern"):
+        return True
+    title = (p.title or "").lower()
+    tab = str(p.raw.get("tab") or "").lower()
+    return any(h in title for h in ("實習", "实习", "intern")) or "實習" in tab or "实习" in tab
+
+
 def _is_campus_posting(p: base.JobPosting) -> bool:
     if p.raw.get("is_campus"):
         return True
@@ -98,6 +107,7 @@ def store_postings(db: Session, postings: list[base.JobPosting]) -> dict:
                       salary_range=COALESCE(CAST(:sal AS jsonb), salary_range),
                       posted_at=COALESCE(:posted, posted_at),
                       is_campus=:is_campus,
+                      is_intern=:is_intern,
                       org_level=:org_level,
                       company_name=:cname,
                       last_seen_at=now(), is_active=true, raw=CAST(:raw AS jsonb)
@@ -110,6 +120,7 @@ def store_postings(db: Session, postings: list[base.JobPosting]) -> dict:
                     "sal": json.dumps(p.salary_range, ensure_ascii=False) if p.salary_range else None,
                     "posted": p.posted_at, "cname": p.company_name,
                     "is_campus": _is_campus_posting(p),
+                    "is_intern": _is_intern_posting(p),
                     "org_level": _org_level(p),
                     "raw": json.dumps(p.raw, ensure_ascii=False),
                 },
@@ -122,9 +133,9 @@ def store_postings(db: Session, postings: list[base.JobPosting]) -> dict:
                     INSERT INTO job_postings
                       (source, external_id, company_name, title, location, department,
                        description_text, apply_url, salary_range, posted_at, is_campus,
-                       org_level, raw)
+                       is_intern, org_level, raw)
                     VALUES (:s, :e, :cname, :t, :loc, :dep, :desc, :url,
-                            CAST(:sal AS jsonb), :posted, :is_campus, :org_level,
+                            CAST(:sal AS jsonb), :posted, :is_campus, :is_intern, :org_level,
                             CAST(:raw AS jsonb))
                     """
                 ),
@@ -135,6 +146,7 @@ def store_postings(db: Session, postings: list[base.JobPosting]) -> dict:
                     "sal": json.dumps(p.salary_range, ensure_ascii=False) if p.salary_range else None,
                     "posted": p.posted_at,
                     "is_campus": _is_campus_posting(p),
+                    "is_intern": _is_intern_posting(p),
                     "org_level": _org_level(p),
                     "raw": json.dumps(p.raw, ensure_ascii=False),
                 },
