@@ -21,6 +21,7 @@ _ATS_HINTS = (
     ("gtht", ("hr.gtht.com",)),
     ("citics", ("careers.citics.com",)),
     ("beisen", ("zhiye.com",)),
+    ("bosera", ("hotjob.cn",)),
 )
 
 GENERIC_LINK_LIMIT = 10  # 通用採集每站最多抓取詳情數
