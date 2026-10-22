@@ -12,7 +12,18 @@ export default function Login({ onLogin }: { onLogin: (s: AuthSession) => void }
   async function submit() {
     if (!email || !password) return setMsg("請填寫郵箱和密碼");
     setBusy(true);
-    setMsg("");
+    setMsg("正在喚醒服務器（免費層冷啟動約需 10-30 秒）…");
+    // 先探活：healthz 慢則持續提示，避免無反饋的長時間等待
+    try {
+      const base = (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
+        "https://jobscoming-backend.onrender.com";
+      await fetch(base + "/healthz", {
+        signal: AbortSignal.timeout(8000),
+      }).catch(() => {});
+      setMsg("正在登錄…");
+    } catch {
+      setMsg("正在喚醒服務器（免費層冷啟動約需 10-30 秒）…");
+    }
     try {
       if (mode === "signin") {
         onLogin(await signIn(email, password));

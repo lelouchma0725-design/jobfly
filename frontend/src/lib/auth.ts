@@ -36,14 +36,26 @@ async function post<T = unknown>(path: string, body: unknown): Promise<T> {
   const base =
     (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
     (import.meta.env.PROD ? "https://jobscoming-backend.onrender.com" : "");
-  const res = await fetch(base + path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { detail?: string }).detail || `HTTP ${res.status}`);
-  return data as T;
+  const ctrl = new AbortController();
+  const timer = window.setTimeout(() => ctrl.abort(), 45000); // 45 秒超時
+  try {
+    const res = await fetch(base + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { detail?: string }).detail || `HTTP ${res.status}`);
+    return data as T;
+  } catch (e) {
+    if ((e as Error).name === "AbortError") {
+      throw new Error("服務器響應超時（免費層冷啟動中），請稍候 10-30 秒再試");
+    }
+    throw e;
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 export async function signIn(email: string, password: string): Promise<AuthSession> {
