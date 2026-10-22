@@ -137,6 +137,58 @@ def _err(resp: httpx.Response) -> str:
     except Exception:  # noqa: BLE001
         return resp.text[:300]
 
+
+class AdminResetRequest(BaseModel):
+    secret: str
+    email: str
+    new_password: str
+
+
+@router.post("/admin-reset-password")
+def admin_reset_password(payload: AdminResetRequest) -> dict:
+    """維護端點：管理員重置用戶密碼（service_role 管理 API）。"""
+    if not settings.ops_secret or payload.secret != settings.ops_secret:
+        raise HTTPException(403, "forbidden")
+    if len(payload.new_password) < 6:
+        raise HTTPException(422, "密碼至少 6 位")
+    headers = {
+        "apikey": settings.supabase_service_role_key,
+        "Authorization": f"Bearer {settings.supabase_service_role_key}",
+        "Content-Type": "application/json",
+    }
+    try:
+        # 找用戶 id（分頁列出）
+        user_id = None
+        page = 1
+        while page <= 10:
+            r = httpx.get(
+                f"{_SB}/auth/v1/admin/users?per_page=200&page={page}",
+                headers=headers, timeout=25,
+            )
+            if r.status_code != 200:
+                return {"status": r.status_code, "body": r.text[:300]}
+            users = r.json().get("users") or []
+            hit = next((u for u in users if (u.get("email") or "").lower() == payload.email.lower()), None)
+            if hit:
+                user_id = hit["id"]
+                break
+            if not users or len(users) < 200:
+                break
+            page += 1
+        if not user_id:
+            raise HTTPException(404, "找不到該郵箱用戶")
+        r = httpx.put(
+            f"{_SB}/auth/v1/admin/users/{user_id}",
+            headers=headers,
+            json={"password": payload.new_password},
+            timeout=25,
+        )
+        if r.status_code != 200:
+            return {"status": r.status_code, "body": r.text[:300]}
+        return {"ok": True, "note": "密碼已重置"}
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"無法連接 Supabase Auth: {exc}") from exc
+
 class ChangePasswordRequest(BaseModel):
     old_password: str
     new_password: str
