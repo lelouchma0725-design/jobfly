@@ -34,6 +34,7 @@ def list_jobs(
     job_type: str | None = None,
     limit: int = 20, offset: int = 0,
 ) -> dict:
+    q_orig, company_orig = q, company
     q = t2s(q) or None
     company = t2s(company) or None
     limit = min(max(limit, 1), 200)
@@ -47,7 +48,8 @@ def list_jobs(
             LEFT JOIN job_matches m ON m.posting_id = p.id AND m.user_id = :uid
             WHERE p.is_active = true
               AND (CAST(:q AS text) IS NULL OR p.title ILIKE '%'||:q||'%' OR p.description_text ILIKE '%'||:q||'%')
-              AND (CAST(:co AS text) IS NULL OR p.company_name ILIKE '%'||:co||'%')
+              AND (CAST(:co AS text) IS NULL OR p.company_name ILIKE '%'||:co||'%'
+                   OR (CAST(:co_orig AS text) IS NULL OR p.company_name ILIKE '%'||:co_orig||'%'))
               AND (CAST(:jt AS text) IS NULL OR
                    (CAST(:jt AS text)='campus' AND p.is_campus AND NOT p.is_intern)
                    OR (CAST(:jt AS text)='society' AND NOT p.is_campus AND NOT p.is_intern)
@@ -59,7 +61,7 @@ def list_jobs(
             LIMIT :lim OFFSET :off
             """
         ),
-        {"uid": user["id"], "q": q, "co": company, "ca": campus, "og": org,
+        {"uid": user["id"], "q": q, "co": company, "co_orig": company_orig, "ca": campus, "og": org,
          "jt": job_type, "lim": limit, "off": offset},
     ).mappings().all()
     total = db.execute(
@@ -68,7 +70,8 @@ def list_jobs(
             SELECT COUNT(*) AS n FROM job_postings p
             WHERE p.is_active = true
               AND (CAST(:q AS text) IS NULL OR p.title ILIKE '%'||:q||'%' OR p.description_text ILIKE '%'||:q||'%')
-              AND (CAST(:co AS text) IS NULL OR p.company_name ILIKE '%'||:co||'%')
+              AND (CAST(:co AS text) IS NULL OR p.company_name ILIKE '%'||:co||'%'
+                   OR (CAST(:co_orig AS text) IS NULL OR p.company_name ILIKE '%'||:co_orig||'%'))
               AND (CAST(:jt AS text) IS NULL OR
                    (CAST(:jt AS text)='campus' AND p.is_campus AND NOT p.is_intern)
                    OR (CAST(:jt AS text)='society' AND NOT p.is_campus AND NOT p.is_intern)
@@ -78,7 +81,7 @@ def list_jobs(
               AND (CAST(:og AS text) IS NULL OR p.org_level = :og)
             """
         ),
-        {"q": q, "co": company, "ca": campus, "og": org, "jt": job_type},
+        {"q": q, "co": company, "co_orig": company_orig, "ca": campus, "og": org, "jt": job_type},
     ).mappings().one()["n"]
     return {
         "items": [

@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # (門戶根, portalId, 標籤, category)
 PORTALS = (
     ("https://cicc.zhiye.com", "1bb97a43-1bb9-42c2-b5c6-19ddc82c0cb9", "中金公司"),
-    ("https://cmhk.zhiye.com", "ad6df64e-8702-483f-a2ec-c44deefceec4", "招商局集團"),
+    ("https://cmhk.zhiye.com", "ad6df64e-8702-483f-a2ec-c44deefceec4", "招商局集团"),
 )
 
 CATEGORIES = (
