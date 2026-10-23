@@ -185,6 +185,10 @@ def run_collect(user: CurrentUser, db: DB, payload: CollectRequest, background_t
                     "running": False,
                     "finished_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
                     "report": {k: report.get(k) for k in ("new", "updated", "matched", "errors", "collected")},
+                    "targets": [
+                        {"company": t.get("company"), "count": t.get("count"), "error": t.get("error")}
+                        for t in (report.get("targets") or [])
+                    ],
                 })},
             )
             s.commit()
