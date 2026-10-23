@@ -203,6 +203,7 @@ def list_matches(
     campus: str | None = None, org: str | None = None,
     job_type: str | None = None,
 ) -> dict:
+    company_orig = company
     company = t2s(company) or None
     limit = min(max(limit, 1), 100)
     rows = db.execute(
@@ -215,7 +216,8 @@ def list_matches(
             FROM job_matches m
             JOIN job_postings p ON p.id = m.posting_id
             WHERE m.user_id = :uid AND (CAST(:st AS text) IS NULL OR CAST(m.status AS text) = :st)
-              AND (CAST(:co AS text) IS NULL OR p.company_name ILIKE '%'||:co||'%')
+              AND (CAST(:co AS text) IS NULL OR p.company_name ILIKE '%'||:co||'%'
+                   OR (CAST(:co_orig AS text) IS NULL OR p.company_name ILIKE '%'||:co_orig||'%'))
               AND (CAST(:jt AS text) IS NULL OR
                    (CAST(:jt AS text)='campus' AND p.is_campus AND NOT p.is_intern)
                    OR (CAST(:jt AS text)='society' AND NOT p.is_campus AND NOT p.is_intern)
@@ -228,7 +230,7 @@ def list_matches(
             LIMIT :lim OFFSET :off
             """
         ),
-        {"uid": user["id"], "st": status, "co": company, "ca": campus, "og": org,
+        {"uid": user["id"], "st": status, "co": company, "co_orig": company_orig, "ca": campus, "og": org,
          "jt": job_type, "lim": limit, "off": offset},
     ).mappings().all()
     total = db.execute(
@@ -237,7 +239,8 @@ def list_matches(
             SELECT COUNT(*) AS n FROM job_matches m
             JOIN job_postings p ON p.id = m.posting_id
             WHERE m.user_id = :uid AND (CAST(:st AS text) IS NULL OR CAST(m.status AS text) = :st)
-              AND (CAST(:co AS text) IS NULL OR p.company_name ILIKE '%'||:co||'%')
+              AND (CAST(:co AS text) IS NULL OR p.company_name ILIKE '%'||:co||'%'
+                   OR (CAST(:co_orig AS text) IS NULL OR p.company_name ILIKE '%'||:co_orig||'%'))
               AND (CAST(:jt AS text) IS NULL OR
                    (CAST(:jt AS text)='campus' AND p.is_campus AND NOT p.is_intern)
                    OR (CAST(:jt AS text)='society' AND NOT p.is_campus AND NOT p.is_intern)
@@ -247,7 +250,7 @@ def list_matches(
               AND (CAST(:og AS text) IS NULL OR p.org_level = :og)
             """
         ),
-        {"uid": user["id"], "st": status, "co": company, "ca": campus, "og": org, "jt": job_type},
+        {"uid": user["id"], "st": status, "co": company, "co_orig": company_orig, "ca": campus, "og": org, "jt": job_type},
     ).mappings().one()["n"]
     return {
         "items": [

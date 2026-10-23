@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # (門戶根, suiteKey, 公司名)
 PORTALS = (
     ("https://bosera.hotjob.cn", "SU65f940241c240e0a2275bda8", "博时基金"),
-    ("https://wecruit.hotjob.cn", "SU629dbc0c0dcad452299bc0f7", "招商證券"),
+    ("https://wecruit.hotjob.cn", "SU629dbc0c0dcad452299bc0f7", "招商证券"),
 )
 COMPANY = "博时基金"  # 兼容舊調用
 
