@@ -85,11 +85,19 @@ if settings.debug_500 == "1":
 def healthz_full() -> dict:
     """詳細健康檢查：含 Playwright 可用性（供診斷投遞環境）。"""
     playwright_ok = False
+    pw_err = ""
     try:
-        from playwright.sync_api import sync_playwright  # noqa: F401
+        import playwright  # noqa: F401
 
         playwright_ok = True
-    except ImportError:
+    except Exception as exc:  # noqa: BLE001
+        pw_err = repr(exc)
+    browsers = False
+    try:
+        from pathlib import Path
+
+        browsers = Path("/ms-playwright").is_dir()
+    except Exception:  # noqa: BLE001
         pass
     db_ok = False
     try:
@@ -105,7 +113,8 @@ def healthz_full() -> dict:
             s.close()
     except Exception:  # noqa: BLE001
         pass
-    return {"status": "ok", "playwright": playwright_ok, "db": db_ok}
+    return {"status": "ok", "playwright": playwright_ok, "playwright_err": pw_err,
+            "browsers_dir": browsers, "db": db_ok}
 
 
 @app.get("/healthz")
