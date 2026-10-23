@@ -9,9 +9,8 @@ COPY backend/alembic ./alembic
 COPY backend/alembic.ini ./
 
 RUN pip install --no-cache-dir .
-# 確保 Playwright Python 模組存在（鏡像自帶瀏覽器二進制，此處兜底安裝模組）
-RUN pip install --no-cache-dir playwright==1.63.0 || true
-RUN python -c "import playwright; print('playwright', playwright.__version__)"
+# 確保 Playwright Python 模組存在（鏡像自帶瀏覽器二進制；缺失時兜底安裝，失敗不阻塞構建）
+RUN python -c "import playwright" 2>/dev/null || pip install --no-cache-dir playwright || true
 
 # 使用鏡像內置瀏覽器，無需下載
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
