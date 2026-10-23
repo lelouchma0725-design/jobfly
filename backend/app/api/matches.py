@@ -109,15 +109,18 @@ def list_companies(user: CurrentUser, db: DB) -> list[dict]:
     ]
 
 
-def rematch_company(db: Session, user_id: str, company: str, batch: int = 50) -> dict:
-    """按公司重新匹配：分批循環直到該公司全部崗位重算。"""
+def rematch_company(db: Session, user_id: str, company: str, batch: int = 50,
+                    campus_only: bool = False) -> dict:
+    """按公司重新匹配：分批循環直到該公司全部（或僅校招/實習）崗位重算。"""
+    extra = "AND (p.is_campus = true OR p.is_intern = true)" if campus_only else ""
     total = 0
     for _ in range(20):  # 每輪 50 個，最多 1000 個/公司
         rows = db.execute(
             text(
-                """
+                f"""
                 SELECT p.id FROM job_postings p
                 WHERE p.is_active = true AND p.company_name ILIKE '%'||:co||'%'
+                {extra}
                 ORDER BY p.first_seen_at DESC LIMIT :n OFFSET :off
                 """
             ),
@@ -146,6 +149,7 @@ def rematch_full(db: Session, user_id: str, max_rounds: int = 30, batch: int = 3
 
 class RematchRequest(BaseModel):
     company: str | None = None
+    campus_only: bool = False  # 只重匹配校招/實習（大公司優先）
 
 
 @router.post("/rematch", status_code=202)
@@ -160,7 +164,7 @@ def rematch(user: CurrentUser, db: DB, payload: RematchRequest, background_tasks
         s = SessionLocal()
         try:
             if company:
-                res = rematch_company(s, uid, company)
+                res = rematch_company(s, uid, company, campus_only=payload.campus_only)
             else:
                 res = rematch_full(s, uid)
             logger.info("重新匹配完成 user=%s %s", uid, res)
@@ -170,7 +174,8 @@ def rematch(user: CurrentUser, db: DB, payload: RematchRequest, background_tasks
             s.close()
 
     background_tasks.add_task(_run)
-    return {"started": True, "note": ("僅重新匹配該公司" if company else "全量重新匹配") + "，後台執行中"}
+    return {"started": True, "note": (("僅重新匹配該公司" if company else "全量重新匹配")
+            + ("（僅校招/實習）" if payload.campus_only else "")) + "，後台執行中"}
 
 
 @router.get("/rematch-status")
