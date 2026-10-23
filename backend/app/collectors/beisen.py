@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 
 # (門戶根, portalId, 標籤, category)
 PORTALS = (
-    ("https://cicc.zhiye.com", "1bb97a43-1bb9-42c2-b5c6-19ddc82c0cb9", "中金公司", "cicc"),
+    ("https://cicc.zhiye.com", "1bb97a43-1bb9-42c2-b5c6-19ddc82c0cb9", "中金公司"),
+    ("https://cmhk.zhiye.com", "ad6df64e-8702-483f-a2ec-c44deefceec4", "招商局集團"),
 )
 
 CATEGORIES = (
@@ -33,7 +34,7 @@ CATEGORIES = (
 DISPLAY_FIELDS = ["Category", "Kind", "LocId", "Org", "HeadCount", "Station",
                   "EndTime", "PostDate", "Salary", "ClassificationOne", "ClassificationTwo"]
 
-COMPANY = "中金公司"
+COMPANY = "中金公司"  # 兼容舊調用；新邏輯按門戶取公司名
 
 
 @register
@@ -41,7 +42,10 @@ class BeisenCollector:
     name = "beisen"
 
     def collect(self, target: dict) -> list[JobPosting]:
-        base, portal_id, _, _ = PORTALS[0]
+        # 按關注公司 careers_url 選擇門戶（默認第一個）
+        careers = str(target.get("careers_url") or "")
+        portal = next((p for p in PORTALS if p[0] in careers), PORTALS[0])
+        base, portal_id, company = portal
         postings: list[JobPosting] = []
         seen: set[str] = set()
         for cat, tab_name in CATEGORIES:
@@ -85,7 +89,7 @@ class BeisenCollector:
                     postings.append(JobPosting(
                         source="beisen",
                         external_id=key,
-                        company_name=COMPANY,
+                        company_name=company,
                         title=str(it.get("JobAdName") or "").strip(),
                         apply_url=f"{base}/custom/social",
                         location="、".join(it.get("LocNames") or []) or None,
