@@ -42,7 +42,14 @@ def _fetch(base: str, suite: str, recruit_type: str, page: int) -> tuple[list[di
             "pageSize": "50",
             "currentPage": str(page),
         },
-        headers=HEADERS,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            "Referer": f"{base}/{suite}/pb/social.html",
+            "X-Requested-With": "XMLHttpRequest",
+        },
         timeout=30,
     )
     resp.raise_for_status()
