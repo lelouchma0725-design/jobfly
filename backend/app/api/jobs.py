@@ -29,6 +29,7 @@ class CollectRequest(BaseModel):
 def list_jobs(
     user: CurrentUser, db: DB, q: str | None = None, company: str | None = None,
     campus: str | None = None, org: str | None = None,
+    job_type: str | None = None,
     limit: int = 20, offset: int = 0,
 ) -> dict:
     limit = min(max(limit, 1), 200)
