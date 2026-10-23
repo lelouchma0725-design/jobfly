@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
+from app.core.textutil import t2s
 from app.core.jsonutil import j
 from app.db import get_db
 
@@ -32,6 +33,8 @@ def list_jobs(
     job_type: str | None = None,
     limit: int = 20, offset: int = 0,
 ) -> dict:
+    q = t2s(q) or None
+    company = t2s(company) or None
     limit = min(max(limit, 1), 200)
     rows = db.execute(
         text(

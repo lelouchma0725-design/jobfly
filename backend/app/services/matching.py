@@ -334,7 +334,9 @@ def _location_adjust(db: Session, user_id: str, posting_location: str | None) ->
     weight = (st["location_weight"] if st else None) or 10
     if not preferred:
         return 0
-    loc = (posting_location or "").lower()
+    loc = (posting_location or "").lower().strip()
+    if not loc:
+        return 0  # 崗位無地點信息：不加不減
     if any(p.lower() in loc for p in preferred):
         return weight
     return -min(weight, 10)

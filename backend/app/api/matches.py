@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
+from app.core.textutil import t2s
 from app.core.jsonutil import loads_json
 from app.db import get_db
 from app.services.matching import score_posting

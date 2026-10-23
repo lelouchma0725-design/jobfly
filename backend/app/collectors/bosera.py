@@ -89,7 +89,7 @@ class BoseraCollector:
                         company_name=company,
                         title=title,
                         apply_url=f"{base}/{suite}/pb/index.html",
-                        location=None,
+                        location=(it.get("workPlaceStr") or "").strip() or None,
                         department=(it.get("department") or "").strip() or None,
                         description_text=(
                             f"【{tab_name}】{it.get('postTypeName') or ''}\n"
