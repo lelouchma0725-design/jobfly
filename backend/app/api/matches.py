@@ -198,6 +198,7 @@ def list_matches(
     campus: str | None = None, org: str | None = None,
     job_type: str | None = None,
 ) -> dict:
+    company = t2s(company) or None
     limit = min(max(limit, 1), 100)
     rows = db.execute(
         text(
