@@ -24,6 +24,7 @@ DB = Annotated[Session, Depends(get_db)]
 
 class CollectRequest(BaseModel):
     company: str | None = None
+    match: bool = True  # false = 只採集不匹配（大公司先入庫，匹配另行觸發）
 
 
 @router.get("")
@@ -162,6 +163,7 @@ def run_collect(user: CurrentUser, db: DB, payload: CollectRequest, background_t
 
         from app.db import SessionLocal
 
+        skip_match = not bool(payload.match)
         s = SessionLocal()
         s.execute(
             text(
@@ -172,7 +174,8 @@ def run_collect(user: CurrentUser, db: DB, payload: CollectRequest, background_t
         )
         s.commit()
         try:
-            report = collect_for_user(s, uid, company_name=company or None)
+            report = collect_for_user(s, uid, company_name=company or None,
+                                     skip_match=not (payload.match if isinstance(payload.match, bool) else True))
             s.execute(
                 text(
                     "UPDATE user_settings SET collect_state=CAST(:st AS jsonb), updated_at=now() "

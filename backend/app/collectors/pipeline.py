@@ -200,7 +200,8 @@ def _user_targets(db: Session, user_id: str) -> list[dict]:
     return targets
 
 
-def collect_for_user(db: Session, user_id: str, company_name: str | None = None) -> dict:
+def collect_for_user(db: Session, user_id: str, company_name: str | None = None,
+                     skip_match: bool = False) -> dict:
     """對用戶的關注公司執行採集 + 匹配（可只採集指定公司）。返回報告。"""
     report = {"targets": [], "collected": 0, "new": 0, "updated": 0, "matched": 0, "errors": 0}
     targets = _user_targets(db, user_id)
@@ -244,7 +245,7 @@ def collect_for_user(db: Session, user_id: str, company_name: str | None = None)
             logger.exception("採集失敗 %s (%s)", target["company_name"], platform)
     db.commit()
 
-    report["matched"] = match_new_for_user(db, user_id)
+    report["matched"] = 0 if skip_match else match_new_for_user(db, user_id)
     return report
 
 
