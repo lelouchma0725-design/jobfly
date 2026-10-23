@@ -613,16 +613,18 @@ def answer_and_resume(db: Session, task_id: str, user_id: str, answer: dict | No
             except Exception:  # noqa: BLE001
                 logger.warning("元信息存庫失敗 %s=%s", key, value[:50])
     db.commit()
-    # 適配器專屬人工回填（如中信：用戶官網自行提交後確認 → 直接標記已投遞）
-    if task["task_type"] == "citics_manual":
+    # 適配器專屬人工回填（中信/中金：用戶官網自行提交後確認 → 直接標記已投遞）
+    if task["task_type"] in ("citics_manual", "beisen_manual"):
         try:
+            from app.apply.beisen_apply import merge_manual_answer as beisen_merge
             from app.apply.citics_apply import merge_manual_answer
 
             app_row = _load_application(db, str(task["application_id"]))
             payload = build_candidate_payload(db, user_id)
             _merge_answers(db, str(task["application_id"]), payload)
             ctx = _prepare_context(db, app_row, payload, {})
-            merged = merge_manual_answer(ctx, answer or {})
+            merger = beisen_merge if task["task_type"] == "beisen_manual" else merge_manual_answer
+            merged = merger(ctx, answer or {})
             if merged.get("submitted"):
                 db.execute(
                     text("SELECT id FROM application_attempts WHERE application_id=:aid ORDER BY created_at DESC LIMIT 1"),

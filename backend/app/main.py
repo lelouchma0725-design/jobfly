@@ -81,6 +81,33 @@ if settings.debug_500 == "1":
         )
 
 
+@app.get("/healthz/full")
+def healthz_full() -> dict:
+    """詳細健康檢查：含 Playwright 可用性（供診斷投遞環境）。"""
+    playwright_ok = False
+    try:
+        from playwright.sync_api import sync_playwright  # noqa: F401
+
+        playwright_ok = True
+    except ImportError:
+        pass
+    db_ok = False
+    try:
+        from sqlalchemy import text as _text
+
+        from app.db import SessionLocal
+
+        s = SessionLocal()
+        try:
+            s.execute(_text("SELECT 1"))
+            db_ok = True
+        finally:
+            s.close()
+    except Exception:  # noqa: BLE001
+        pass
+    return {"status": "ok", "playwright": playwright_ok, "db": db_ok}
+
+
 @app.get("/healthz")
 def healthz() -> dict:
     return {"status": "ok"}
