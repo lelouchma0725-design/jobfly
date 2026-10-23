@@ -37,7 +37,7 @@ def list_jobs(
         text(
             """
             SELECT p.id, p.company_name, p.title, p.location, p.department, p.source,
-                   p.apply_url, p.first_seen_at, p.posted_at, p.is_campus, p.org_level,
+                   p.apply_url, p.first_seen_at, p.posted_at, p.is_campus, p.is_intern, p.org_level,
                    m.match_score, m.priority_score, m.status AS match_status, m.id AS match_id
             FROM job_postings p
             LEFT JOIN job_matches m ON m.posting_id = p.id AND m.user_id = :uid
