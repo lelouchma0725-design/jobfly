@@ -34,7 +34,18 @@ TABS = (
     ("12", "實習生招聘", False),
 )
 
-def _fetch(base: str, suite: str, recruit_type: str, page: int) -> tuple[list[dict], int]:
+def _fetch(base: str, suite: str, recruit_type: str, page: int,
+           retries: int = 2) -> tuple[list[dict], int]:
+    for attempt in range(retries + 1):
+        try:
+            return _fetch_once(base, suite, recruit_type, page)
+        except Exception:  # noqa: BLE001
+            if attempt == retries:
+                raise
+            _time.sleep(1.2 * (attempt + 1))  # 退避重試（WAF 限流）
+
+
+def _fetch_once(base: str, suite: str, recruit_type: str, page: int) -> tuple[list[dict], int]:
     resp = httpx.post(
         f"{base}/wecruit/positionInfo/listPosition/{suite}"
         f"?iSaJAx=isAjax&request_locale=zh_CN&t={int(_time.time() * 1000)}",
@@ -52,7 +63,7 @@ def _fetch(base: str, suite: str, recruit_type: str, page: int) -> tuple[list[di
             "Referer": f"{base}/{suite}/pb/social.html",
             "X-Requested-With": "XMLHttpRequest",
         },
-        timeout=30,
+        timeout=15,
     )
     resp.raise_for_status()
     data = resp.json()
@@ -84,6 +95,7 @@ class BoseraCollector:
                     break
                 if not items:
                     break
+                _time.sleep(0.8)  # 頁間節流（避免門戶風控）
                 for it in items:
                     key = str(it.get("externalKey") or "")
                     if not key or key in seen:
