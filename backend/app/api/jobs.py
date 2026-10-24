@@ -159,7 +159,8 @@ def run_collect(user: CurrentUser, db: DB, payload: CollectRequest, background_t
     from app.collectors.pipeline import collect_for_user
 
     uid = user["id"]
-    company = (payload.company or "").strip()
+    company = t2s((payload.company or "").strip())
+    company_orig = (payload.company or "").strip()
 
     def _run() -> None:
         import datetime as _dt

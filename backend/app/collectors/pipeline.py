@@ -204,10 +204,13 @@ def collect_for_user(db: Session, user_id: str, company_name: str | None = None,
                      skip_match: bool = False) -> dict:
     """對用戶的關注公司執行採集 + 匹配（可只採集指定公司）。返回報告。"""
     report = {"targets": [], "collected": 0, "new": 0, "updated": 0, "matched": 0, "errors": 0}
+    from app.core.textutil import t2s as _t2s
+
     targets = _user_targets(db, user_id)
     if company_name:
         targets = [t for t in targets
                    if company_name.lower() in (t["company_name"] or "").lower()
+                   or company_name.lower() in _t2s(t["company_name"] or "").lower()
                    or company_name.lower() in str(t.get("aliases") or "").lower()]
         if not targets:
             report["errors"] += 1
