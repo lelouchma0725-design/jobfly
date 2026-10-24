@@ -28,6 +28,23 @@ PORTALS = (
 )
 COMPANY = "博时基金"  # 兼容舊調用
 
+# 門戶響應 company 字段 → 系統公司名（華泰集團多主體共用門戶）
+COMPANY_ALIASES = {
+    "华泰柏瑞基金管理有限公司": "华泰柏瑞基金",
+    "华泰联合证券": "华泰联合证券",
+    "华泰证券（上海）资产管理有限公司": "华泰证券资管",
+    "博时基金管理有限公司": "博时基金",
+    "华泰证券": "华泰证券",
+    "华泰证券股份有限公司": "华泰证券",
+}
+
+
+def _map_company(raw_company: str, portal_company: str) -> str:
+    for k, v in COMPANY_ALIASES.items():
+        if k in (raw_company or ""):
+            return v
+    return portal_company
+
 TABS = (
     ("2", "社會招聘", False),
     ("1", "校園招聘", True),
@@ -105,7 +122,7 @@ class BoseraCollector:
                     postings.append(JobPosting(
                         source="bosera",
                         external_id=key,
-                        company_name=company,
+                        company_name=_map_company(it.get("company") or "", company),
                         title=title,
                         apply_url=f"{base}/{suite}/pb/index.html",
                         location=(it.get("workPlaceStr") or "").strip() or None,
