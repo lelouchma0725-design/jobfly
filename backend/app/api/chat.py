@@ -199,12 +199,27 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
         return dict(state or {}) or {"running": False, "提示": "尚無採集記錄"}
 
     def discover_company(args: dict) -> dict:
-        """按公司名自動發現招聘官網（LLM 候選 + 實網探測）。"""
+        """按公司名自動發現招聘官網（已知站點庫優先，其次 LLM 候選 + 實網探測）。"""
         import httpx as _httpx
+
+        KNOWN_SITES = {
+            "中金公司": "https://cicc.zhiye.com",
+            "中信證券": "https://careers.citics.com",
+            "國泰海通": "https://hr.gtht.com/recruitment/main/recruit2",
+            "博時基金": "https://bosera.hotjob.cn",
+            "招商局集團": "https://cmhk.zhiye.com",
+            "招商證券": "https://wecruit.hotjob.cn/SU629dbc0c0dcad452299bc0f7/pb/index.html",
+            "南方基金": "https://wecruit.hotjob.cn/SU6138665dbef57c3b63841399/pb/index.html",
+            "Cloudflare": "https://boards.greenhouse.io/cloudflare",
+        }
 
         name = str(args.get("name") or "").strip()[:60]
         if not name:
             return {"完成": False, "原因": "請提供公司名"}
+        hit = next((u for k, u in KNOWN_SITES.items() if k in name or name in k), None)
+        if hit:
+            return {"公司": name, "官網": hit, "來源": "已知站點庫",
+                    "提示": "已找到招聘官網，可直接 add_company 添加後採集"}
         out = chat_json(
             "你熟悉各公司招聘官網。給出該公司招聘官網地址候選（2-4 個）。輸出 JSON："
             '{"candidates": ["url"], "careers_hint": "一句話說明"}',

@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 PORTALS = (
     ("https://bosera.hotjob.cn", "SU65f940241c240e0a2275bda8", "博时基金"),
     ("https://wecruit.hotjob.cn", "SU629dbc0c0dcad452299bc0f7", "招商证券"),
+    ("https://wecruit.hotjob.cn", "SU6138665dbef57c3b63841399", "南方基金"),
 )
 COMPANY = "博时基金"  # 兼容舊調用
 
@@ -39,7 +40,7 @@ def _fetch(base: str, suite: str, recruit_type: str, page: int) -> tuple[list[di
         data={
             "isFrompb": "true",
             "recruitType": recruit_type,
-            "pageSize": "50",
+            "pageSize": "15",
             "currentPage": str(page),
         },
         headers={
@@ -64,7 +65,10 @@ class BoseraCollector:
 
     def collect(self, target: dict) -> list[JobPosting]:
         careers = str(target.get("careers_url") or "")
-        portal = next((p for p in PORTALS if p[0] in careers), PORTALS[0])
+        name = str(target.get("company_name") or "")
+        portal = next(
+            (p for p in PORTALS if p[0] in careers and p[2] in careers + name), None
+        ) or next((p for p in PORTALS if p[0] in careers), None) or PORTALS[0]
         base, suite, company = portal
         postings: list[JobPosting] = []
         seen: set[str] = set()
