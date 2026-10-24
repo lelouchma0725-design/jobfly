@@ -24,6 +24,7 @@ PORTALS = (
     ("https://bosera.hotjob.cn", "SU65f940241c240e0a2275bda8", "博时基金"),
     ("https://wecruit.hotjob.cn", "SU629dbc0c0dcad452299bc0f7", "招商证券"),
     ("https://wecruit.hotjob.cn", "SU6138665dbef57c3b63841399", "南方基金"),
+    ("https://wecruit.hotjob.cn", "SU6419745cbef57c635fe10142", "华泰证券"),
 )
 COMPANY = "博时基金"  # 兼容舊調用
 
@@ -67,6 +68,8 @@ class BoseraCollector:
         careers = str(target.get("careers_url") or "")
         name = str(target.get("company_name") or "")
         portal = next(
+            (p for p in PORTALS if name and (name in p[2] or p[2] in name)), None
+        ) or next(
             (p for p in PORTALS if p[0] in careers and p[2] in careers + name), None
         ) or next((p for p in PORTALS if p[0] in careers), None) or PORTALS[0]
         base, suite, company = portal
