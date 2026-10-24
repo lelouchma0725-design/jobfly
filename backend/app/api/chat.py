@@ -210,6 +210,8 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
             "招商局集團": "https://cmhk.zhiye.com",
             "招商證券": "https://wecruit.hotjob.cn/SU629dbc0c0dcad452299bc0f7/pb/index.html",
             "南方基金": "https://wecruit.hotjob.cn/SU6138665dbef57c3b63841399/pb/index.html",
+            "華泰證券": "https://wecruit.hotjob.cn/SU6419745cbef57c635fe10142/pb/index.html",
+            "华泰证券": "https://wecruit.hotjob.cn/SU6419745cbef57c635fe10142/pb/index.html",
             "Cloudflare": "https://boards.greenhouse.io/cloudflare",
         }
 
@@ -221,18 +223,30 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
             return {"公司": name, "官網": hit, "來源": "已知站點庫",
                     "提示": "已找到招聘官網，可直接 add_company 添加後採集"}
         out = chat_json(
-            "你熟悉各公司招聘官網。給出該公司招聘官網地址候選（2-4 個）。輸出 JSON："
-            '{"candidates": ["url"], "careers_hint": "一句話說明"}',
+            "你熟悉各公司招聘官網。給出該公司招聘官網地址候選，"
+            "並用公司拼音猜測北森招聘雲門戶後綴。輸出 JSON："
+            '{"candidates": ["url"], "pinyin_hints": ["拼音"], "careers_hint": "一句話說明"}',
             f"公司名：{name}",
-            max_tokens=400,
+            max_tokens=500,
         )
+        # 拼音後綴猜測：{pinyin}.zhiye.com / {pinyin}.hotjob.cn
+        extra = []
+        for py in (out.get("pinyin_hints") or [])[:3]:
+            for dom in ("zhiye.com", "hotjob.cn"):
+                extra.append(f"https://{py}.{dom}")
+        candidates = list(dict.fromkeys((out.get("candidates") or [])[:3] + extra))
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+        }
         verified = []
-        for url in (out.get("candidates") or [])[:3]:
+        for url in candidates:
             if not url.startswith("http"):
                 continue
             try:
-                resp = _httpx.get(url, timeout=6, follow_redirects=True,
-                                  headers={"User-Agent": "Mozilla/5.0"})
+                resp = _httpx.get(url, timeout=8, follow_redirects=True, headers=headers)
                 title = ""
                 m = re.search(r"<title>([^<]*)</title>", resp.text, re.I)
                 if m:
@@ -240,7 +254,15 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
                 verified.append({"url": str(resp.url), "status": resp.status_code, "title": title})
             except Exception as exc:  # noqa: BLE001
                 verified.append({"url": url, "status": "unreachable", "title": str(exc)[:60]})
-        return {"公司": name, "說明": out.get("careers_hint"), "候選官網": verified}
+        ok = [v for v in verified if v["status"] == 200 and v.get("title")]
+        best = (ok or verified or [{"url": candidates[0] if candidates else ""}])[0]["url"]
+        return {
+            "公司": name, "說明": out.get("careers_hint"),
+            "候選官網": verified,
+            "最佳猜測": best,
+            "建議": f"探測成功 {len(ok)}/{len(verified)} 個。可直接用 add_company 添加「{best}」"
+                    "（系統採集器會自動識別 zhiye/hotjob 等招聘系統）。",
+        }
 
     def add_company(args: dict) -> dict:
         name = str(args.get("name") or "").strip()[:100]
