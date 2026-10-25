@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 PORTALS = (
     ("https://cicc.zhiye.com", "1bb97a43-1bb9-42c2-b5c6-19ddc82c0cb9", "中金公司"),
     ("https://cmhk.zhiye.com", "ad6df64e-8702-483f-a2ec-c44deefceec4", "招商局集团"),
+    ("https://cscihk.zhiye.com", "0c57aee2-ce51-40c5-8e5f-cc102040ac64", "中信建投国际"),
 )
 
 CATEGORIES = (
