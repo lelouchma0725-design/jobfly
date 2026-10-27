@@ -221,3 +221,38 @@ def collect_status(user: CurrentUser, db: DB) -> dict:
         {"u": user["id"]},
     ).mappings().first()
     return dict(row["collect_state"] or {}) if row and row["collect_state"] else {"running": False}
+
+class IngestRequest(BaseModel):
+    secret: str
+    company_name: str
+    postings: list[dict]
+
+
+@router.post("/ingest")
+def ingest(user: CurrentUser, db: DB, payload: IngestRequest) -> dict:
+    """本地橋接：服務器 IP 被門戶風控時，由本地腳本採集後推送入庫（OPS_SECRET 保護）。"""
+    from app.collectors.base import JobPosting
+    from app.collectors.pipeline import store_postings
+    from app.config import settings
+
+    if not settings.ops_secret or payload.secret != settings.ops_secret:
+        raise HTTPException(403, "forbidden")
+    posts = []
+    for d in payload.postings:
+        try:
+            posts.append(JobPosting(
+                source=str(d.get("source") or "bridge"),
+                external_id=str(d.get("external_id") or ""),
+                company_name=str(d.get("company_name") or payload.company_name),
+                title=str(d.get("title") or ""),
+                apply_url=str(d.get("apply_url") or ""),
+                location=d.get("location"),
+                department=d.get("department"),
+                description_text=str(d.get("description_text") or ""),
+                posted_at=d.get("posted_at"),
+                raw=dict(d.get("raw") or {}),
+            ))
+        except Exception:  # noqa: BLE001
+            continue
+    stats = store_postings(db, posts)
+    return {"ok": True, **stats}
