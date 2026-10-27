@@ -117,6 +117,38 @@ def healthz_full() -> dict:
             "browsers_dir": browsers, "db": db_ok}
 
 
+@app.get("/healthz/feishu")
+def healthz_feishu() -> dict:
+    """診斷：從服務器側探測飛書門戶（驗證地域風控）。"""
+    import httpx as _hx
+
+    out = {}
+    try:
+        c = _hx.Client(headers={"User-Agent": "Mozilla/5.0"}, timeout=20, follow_redirects=True)
+        r0 = c.get("https://gffunds.jobs.feishu.cn/833056")
+        out["page"] = r0.status_code
+        r = c.post("https://gffunds.jobs.feishu.cn/api/v1/search/job/posts",
+                   headers={"Content-Type": "application/json", "Accept": "application/json",
+                            "website-path": "833056", "portal-channel": "saas-career",
+                            "portal-platform": "pc",
+                            "Referer": "https://gffunds.jobs.feishu.cn/833056"},
+                   json={"keyword": "", "limit": 5, "offset": 0, "job_category_id_list": [],
+                         "tag_id_list": [], "location_code_list": [], "subject_id_list": [],
+                         "recruitment_id_list": [], "portal_type": 6,
+                         "job_function_id_list": [], "storefront_id_list": [],
+                         "portal_entrance": 1})
+        out["api"] = r.status_code
+        if r.status_code == 200:
+            d = r.json().get("data") or {}
+            out["count"] = d.get("count")
+        else:
+            out["body"] = r.text[:120]
+        c.close()
+    except Exception as exc:  # noqa: BLE001
+        out["error"] = repr(exc)[:200]
+    return out
+
+
 @app.get("/healthz")
 def healthz() -> dict:
     return {"status": "ok"}
