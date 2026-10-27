@@ -32,6 +32,21 @@ HEADERS_BASE = {
     "Accept-Language": "zh-CN,zh;q=0.9",
 }
 
+def _to_iso(v) -> str | None:
+    """飛書毫秒時間戳 → ISO 字符串。"""
+    if not v:
+        return None
+    try:
+        ms = float(str(v))
+        if ms > 1e12:
+            ms /= 1000.0
+        import datetime as _dt
+
+        return _dt.datetime.fromtimestamp(ms, tz=_dt.timezone.utc).isoformat()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 POST_BODY = {
     "keyword": "", "limit": 50, "offset": 0,
     "job_category_id_list": [], "tag_id_list": [],
@@ -124,7 +139,7 @@ class FeishuCollector:
                         location=loc,
                         department=str(dept) if dept else None,
                         description_text=desc[:6000],
-                        posted_at=str(it.get("publish_time") or "") or None,
+                        posted_at=_to_iso(it.get("publish_time")),
                         raw={
                             "tab": tab or ("校園招聘" if "校" in rec_type else "社會招聘"),
                             "is_campus": "校" in rec_type or "校" in tab,
