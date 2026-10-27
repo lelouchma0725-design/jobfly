@@ -212,6 +212,8 @@ def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
             "南方基金": "https://wecruit.hotjob.cn/SU6138665dbef57c3b63841399/pb/index.html",
             "華泰證券": "https://wecruit.hotjob.cn/SU6419745cbef57c635fe10142/pb/index.html",
             "华泰证券": "https://wecruit.hotjob.cn/SU6419745cbef57c635fe10142/pb/index.html",
+            "廣發基金": "https://gffunds.jobs.feishu.cn",
+            "广发基金": "https://gffunds.jobs.feishu.cn",
             "Cloudflare": "https://boards.greenhouse.io/cloudflare",
         }
 

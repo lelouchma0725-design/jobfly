@@ -23,6 +23,7 @@ _ATS_HINTS = (
     ("beisen", ("zhiye.com",)),
     ("bosera", ("hotjob.cn", "wecruit.hotjob.cn")),
     ("huatai_pb", ("huatai-pb.com",)),
+    ("feishu", ("jobs.feishu.cn",)),
 )
 
 GENERIC_LINK_LIMIT = 10  # 通用採集每站最多抓取詳情數
