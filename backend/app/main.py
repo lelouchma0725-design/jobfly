@@ -127,10 +127,14 @@ def healthz_feishu() -> dict:
         c = _hx.Client(headers={"User-Agent": "Mozilla/5.0"}, timeout=20, follow_redirects=True)
         r0 = c.get("https://gffunds.jobs.feishu.cn/833056")
         out["page"] = r0.status_code
+        out["cookies"] = list(c.cookies.keys())
+        csrf = c.cookies.get("atsx-csrf-token")
+        out["csrf"] = bool(csrf)
         r = c.post("https://gffunds.jobs.feishu.cn/api/v1/search/job/posts",
                    headers={"Content-Type": "application/json", "Accept": "application/json",
                             "website-path": "833056", "portal-channel": "saas-career",
                             "portal-platform": "pc",
+                            "x-csrf-token": (csrf or ""),
                             "Referer": "https://gffunds.jobs.feishu.cn/833056"},
                    json={"keyword": "", "limit": 5, "offset": 0, "job_category_id_list": [],
                          "tag_id_list": [], "location_code_list": [], "subject_id_list": [],
