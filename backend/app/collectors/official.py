@@ -24,6 +24,7 @@ _ATS_HINTS = (
     ("bosera", ("hotjob.cn", "wecruit.hotjob.cn")),
     ("huatai_pb", ("huatai-pb.com",)),
     ("feishu", ("jobs.feishu.cn", "gffunds.com.cn")),
+    ("zofund", ("zofund.zhiye.com",)),
 )
 
 GENERIC_LINK_LIMIT = 10  # 通用採集每站最多抓取詳情數

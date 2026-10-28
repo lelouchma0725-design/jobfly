@@ -25,6 +25,7 @@ PORTALS = (
     ("https://wecruit.hotjob.cn", "SU629dbc0c0dcad452299bc0f7", "招商证券"),
     ("https://wecruit.hotjob.cn", "SU6138665dbef57c3b63841399", "南方基金"),
     ("https://wecruit.hotjob.cn", "SU6419745cbef57c635fe10142", "华泰证券"),
+    ("https://wecruit.hotjob.cn", "SU628a429c0dcad41af38720c0", "永赢基金"),
 )
 COMPANY = "博时基金"  # 兼容舊調用
 
