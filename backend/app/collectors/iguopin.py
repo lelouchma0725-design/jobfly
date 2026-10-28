@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 import httpx
 
@@ -28,7 +29,8 @@ SITE = "https://www.iguopin.com"
 COMPANY = "國聘"
 
 DISTRICTS = ["000000.110000", "000000.310000", "000000.810000"]  # 北京/上海/香港
-SOCIAL_ENABLED = False  # 暫緩社會招聘（用戶要求：先校園）
+SOCIAL_ENABLED = True  # 已開啟社招（用戶要求：校園+社招都採）
+RECRUIT_TYPES = ["1161T1j6", "115amZVP"]  # 校園招聘 / 社會招聘
 MIN_WAGE = 15000  # 元/月
 
 HEADERS = {
@@ -58,28 +60,40 @@ class IguopinCollector:
     def collect(self, target: dict) -> list[JobPosting]:
         postings: list[JobPosting] = []
         seen: set[str] = set()
+        consecutive_empty = 0
         client = httpx.Client(headers=HEADERS, timeout=30)
         try:
-            for page in range(1, 51):
+            for page in range(1, 60):
                 try:
-                    resp = client.post(
-                        f"{BASE}/api/jobs/v1/recom-job",
-                        json={"search": {"page": page, "page_size": 20,
-                                         "district": DISTRICTS,
-                                         "min_wage": MIN_WAGE,
-                                         "recruitment_type": ["1161T1j6"]},
-                              "recom": {"update_time": True,
-                                        "company_nature": True,
-                                        "hot_job": True}},
-                    )
-                    resp.raise_for_status()
-                    data = resp.json().get("data") or {}
-                    items = data.get("list") or []
+                    items = []
+                    for attempt in range(3):  # API 偶發空響應 → 重試
+                        resp = client.post(
+                            f"{BASE}/api/jobs/v1/recom-job",
+                            json={"search": {"page": page, "page_size": 20,
+                                             "district": DISTRICTS,
+                                             "min_wage": MIN_WAGE,
+                                             "recruitment_type": RECRUIT_TYPES},
+                                  "recom": {"update_time": True,
+                                            "company_nature": True,
+                                            "hot_job": True}},
+                        )
+                        resp.raise_for_status()
+                        data = resp.json().get("data") or {}
+                        items = data.get("list") or []
+                        if items:
+                            break
+                        time.sleep(1.2 * (attempt + 1))
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("iguopin 採集失敗 p=%s: %s", page, exc)
-                    break
+                    logger.warning("iguopin 採集失敗 p=%s: %s（跳過繼續）", page, exc)
+                    time.sleep(2.0)
+                    continue
                 if not items:
-                    break
+                    consecutive_empty += 1
+                    if consecutive_empty >= 3:
+                        break  # 連續 3 個空頁（可能是限流 → 前面已重試），停止
+                    time.sleep(3.0)  # 冷卻後繼續下一頁
+                    continue
+                consecutive_empty = 0
                 for it in items:
                     key = str(it.get("job_id") or "")
                     if not key or key in seen:
@@ -121,6 +135,7 @@ class IguopinCollector:
                             **it,
                         },
                     ))
+                time.sleep(1.5)  # 頁間節流（防限流）
                 if len(items) < 20:
                     break
         finally:
