@@ -25,6 +25,7 @@ _ATS_HINTS = (
     ("huatai_pb", ("huatai-pb.com",)),
     ("feishu", ("jobs.feishu.cn", "gffunds.com.cn")),
     ("zofund", ("zofund.zhiye.com",)),
+    ("iguopin", ("iguopin.com", "gp-api.iguopin.com")),
 )
 
 GENERIC_LINK_LIMIT = 10  # 通用採集每站最多抓取詳情數
