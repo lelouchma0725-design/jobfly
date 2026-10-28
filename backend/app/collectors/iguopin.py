@@ -57,7 +57,8 @@ def _district_text(d: list | None) -> str:
 class IguopinCollector:
     name = "iguopin"
 
-    def collect(self, target: dict) -> list[JobPosting]:
+    def collect(self, target: dict, recruit_types: list[str] | None = None) -> list[JobPosting]:
+        rt = recruit_types or list(RECRUIT_TYPES)
         postings: list[JobPosting] = []
         seen: set[str] = set()
         consecutive_empty = 0
@@ -72,7 +73,7 @@ class IguopinCollector:
                             json={"search": {"page": page, "page_size": 20,
                                              "district": DISTRICTS,
                                              "min_wage": MIN_WAGE,
-                                             "recruitment_type": RECRUIT_TYPES},
+                                             "recruitment_type": rt},
                                   "recom": {"update_time": True,
                                             "company_nature": True,
                                             "hot_job": True}},
@@ -135,7 +136,9 @@ class IguopinCollector:
                             **it,
                         },
                     ))
-                time.sleep(1.5)  # 頁間節流（防限流）
+                time.sleep(2.5)  # 頁間節流（防限流）
+                if page % 10 == 0:
+                    time.sleep(20)  # 每 10 頁長冷卻
                 if len(items) < 20:
                     break
         finally:
