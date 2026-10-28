@@ -45,7 +45,7 @@ def _district_text(d: list | None) -> str:
     parts = []
     for x in d:
         if isinstance(x, dict):
-            parts.append(str(x.get("name") or x.get("district_name") or ""))
+            parts.append(str(x.get("area_cn") or x.get("name") or x.get("district_name") or ""))
         else:
             parts.append(str(x))
     return "、".join(p for p in parts if p)
