@@ -65,6 +65,11 @@ class ZofundCollector:
                                 rows.append((cells, job_id))
                     if not rows:
                         break
+                    # 分頁參數無效時服務端返回第 1 頁 → 若本頁 jobId 全部已見則停止
+                    page_ids = [re.search(r"jobId=(\d+)", h).group(1)
+                                for _, h in rows if re.search(r"jobId=(\d+)", h)]
+                    if page_ids and all(pid in seen for pid in page_ids):
+                        break
                     for cells, job_href in rows:
                         job_id = re.search(r"jobId=(\d+)", job_href)
                         if not job_id:
@@ -102,8 +107,7 @@ class ZofundCollector:
                             raw={"tab": tab_name, "is_campus": is_campus,
                                  "is_intern": tab_name == "實習生招聘"},
                         ))
-                    if page == 1 and len(rows) < 10:
-                        break
+
         finally:
             client.close()
         return postings
