@@ -123,6 +123,15 @@ def collect_status(user: CurrentUser, db: DB) -> dict:
     return dict(row["collect_state"] or {}) if row and row["collect_state"] else {"running": False}
 
 
+@router.get("/sources")
+def list_sources(db: DB) -> dict:
+    """已入庫崗位的來源列表（有數據的平台才顯示）。"""
+    rows = db.execute(
+        text("SELECT DISTINCT source FROM job_postings WHERE is_active = true ORDER BY source")
+    ).all()
+    return {"sources": [{"code": r[0], "label": source_label(r[0])} for r in rows]}
+
+
 @router.get("/{posting_id}")
 def get_job(user: CurrentUser, db: DB, posting_id: str) -> dict:
     row = db.execute(
@@ -258,11 +267,3 @@ def ingest(user: CurrentUser, db: DB, payload: IngestRequest) -> dict:
             continue
     stats = store_postings(db, posts)
     return {"ok": True, **stats}
-
-@router.get("/sources")
-def list_sources(db: DB) -> dict:
-    """已入庫崗位的來源列表（有數據的平台才顯示）。"""
-    rows = db.execute(
-        text("SELECT DISTINCT source FROM job_postings WHERE is_active = true ORDER BY source")
-    ).all()
-    return {"sources": [{"code": r[0], "label": source_label(r[0])} for r in rows]}
