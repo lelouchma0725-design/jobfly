@@ -216,7 +216,7 @@ def list_matches(
                    p.org_level, p.apply_url, p.first_seen_at, p.raw->'directions' AS directions
             FROM job_matches m
             JOIN job_postings p ON p.id = m.posting_id
-            WHERE m.user_id = :uid AND (CAST(:st AS text) IS NULL OR CAST(m.status AS text) = :st)
+            WHERE m.user_id = :uid AND p.is_active = true AND (CAST(:st AS text) IS NULL OR CAST(m.status AS text) = :st)
               AND (CAST(:co AS text) IS NULL OR p.company_name ILIKE '%'||:co||'%'
                    OR (CAST(:co_orig AS text) IS NULL OR p.company_name ILIKE '%'||:co_orig||'%'))
               AND (CAST(:jt AS text) IS NULL OR
@@ -240,7 +240,7 @@ def list_matches(
             """
             SELECT COUNT(*) AS n FROM job_matches m
             JOIN job_postings p ON p.id = m.posting_id
-            WHERE m.user_id = :uid AND (CAST(:st AS text) IS NULL OR CAST(m.status AS text) = :st)
+            WHERE m.user_id = :uid AND p.is_active = true AND (CAST(:st AS text) IS NULL OR CAST(m.status AS text) = :st)
               AND (CAST(:co AS text) IS NULL OR p.company_name ILIKE '%'||:co||'%'
                    OR (CAST(:co_orig AS text) IS NULL OR p.company_name ILIKE '%'||:co_orig||'%'))
               AND (CAST(:jt AS text) IS NULL OR

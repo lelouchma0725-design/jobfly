@@ -16,6 +16,7 @@ type Job = {
   match_status: string | null;
   is_campus: boolean;
   is_intern?: boolean;
+  is_active?: boolean;
   org_level: string;
 };
 
@@ -37,7 +38,7 @@ export default function Jobs() {
   const [q, setQ] = useState("");
   const [company, setCompany] = useState("");
   const [campus, setCampus] = useState("");
-  const [source, setSource] = useState("");
+  const [sourceText, setSourceText] = useState("");
   const [sources, setSources] = useState<{ code: string; label: string }[]>([]);
   const [org, setOrg] = useState("");
   const [detail, setDetail] = useState<JobDetail | null>(null);
@@ -60,7 +61,8 @@ export default function Jobs() {
     if (q) params.set("q", q);
     if (company) params.set("company", company);
     if (campus) params.set("job_type", campus);
-    if (source) params.set("source", source);
+    const srcCode = sources.find((s) => s.label === sourceText)?.code ?? "";
+    if (srcCode) params.set("source", srcCode);
     if (org) params.set("org", org);
     try {
       const res = await api<{ items: Job[]; total: number }>(`/api/jobs?${params}`);
@@ -70,6 +72,11 @@ export default function Jobs() {
       setMsg("讀取崗位失敗");
     }
   }
+  useEffect(() => {
+    api<{ sources: { code: string; label: string }[] }>("/api/jobs/sources")
+      .then((d) => setSources(d.sources || []))
+      .catch(() => {});
+  }, []);
   useEffect(() => {
     void load();
     // 返回頁面時恢復採集狀態：完成過 → 綠色提示；進行中 → 自動繼續輪詢
@@ -171,12 +178,18 @@ export default function Jobs() {
               <option value="society">僅社招</option>
               <option value="intern">僅實習</option>
             </select>
-            <select value={source} onChange={(e) => setSource(e.target.value)}>
-              <option value="">來源：全部</option>
+            <input
+              list="job-src-list"
+              placeholder="來源：全部（可輸入如：國聘）"
+              value={sourceText}
+              onChange={(e) => setSourceText(e.target.value)}
+              style={{ width: 190 }}
+            />
+            <datalist id="job-src-list">
               {sources.map((s) => (
-                <option key={s.code} value={s.code}>{s.label}</option>
+                <option key={s.code} value={s.label} />
               ))}
-            </select>
+            </datalist>
             <select
               value={org}
               onChange={(e) => setOrg(e.target.value)}
@@ -213,7 +226,10 @@ export default function Jobs() {
                   <td>{j.company_name}</td>
                   <td>{j.title}</td>
                   <td>{j.location ?? "-"}</td>
-                  <td>{j.is_intern ? "實習" : j.is_campus ? "校招" : "社招"} · {j.org_level === "headquarter" ? "總部" : j.org_level === "branch" ? "分支" : "—"}</td>
+                  <td>
+                    {j.is_intern ? "實習" : j.is_campus ? "校招" : "社招"} · {j.org_level === "headquarter" ? "總部" : j.org_level === "branch" ? "分支" : "—"}
+                    {j.is_active === false ? " · ⏳已結束" : ""}
+                  </td>
                   <td className="muted">{j.department ?? "—"}</td>
                   <td>{j.source}</td>
                   <td>

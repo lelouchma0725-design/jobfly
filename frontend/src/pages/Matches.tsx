@@ -54,7 +54,7 @@ export default function Matches() {
   const [total, setTotal] = useState(0);
   const [status, setStatus] = useState("");
   const [campus, setCampus] = useState("");
-  const [source, setSource] = useState("");
+  const [sourceText, setSourceText] = useState("");
   const [sources, setSources] = useState<{ code: string; label: string }[]>([]);
   const [org, setOrg] = useState("");
   const [companyInput, setCompanyInput] = useState("");
@@ -85,7 +85,8 @@ export default function Matches() {
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     if (status) params.set("status", status);
     if (campus) params.set("job_type", campus);
-    if (source) params.set("source", source);
+    const srcCode = sources.find((s) => s.label === sourceText)?.code ?? "";
+    if (srcCode) params.set("source", srcCode);
     if (org) params.set("org", org);
     if (company) params.set("company", company);
     try {
@@ -167,12 +168,18 @@ export default function Matches() {
               <option value="society">僅社招</option>
               <option value="intern">僅實習</option>
             </select>
-            <select value={source} onChange={(e) => setSource(e.target.value)}>
-              <option value="">來源：全部</option>
+            <input
+              list="match-src-list"
+              placeholder="來源：全部（可輸入如：國聘）"
+              value={sourceText}
+              onChange={(e) => setSourceText(e.target.value)}
+              style={{ width: 190 }}
+            />
+            <datalist id="match-src-list">
               {sources.map((s) => (
-                <option key={s.code} value={s.code}>{s.label}</option>
+                <option key={s.code} value={s.label} />
               ))}
-            </select>
+            </datalist>
             <select
               value={org}
               onChange={(e) => {

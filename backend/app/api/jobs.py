@@ -34,9 +34,11 @@ def list_jobs(
     campus: str | None = None, org: str | None = None,
     job_type: str | None = None,
     source: str | None = None,
+    only_active: str | None = "true",
     limit: int = 20, offset: int = 0,
 ) -> dict:
     q_orig, company_orig = q, company
+    only_active = "true" if only_active == "true" else None
     q = t2s(q) or None
     company = t2s(company) or None
     limit = min(max(limit, 1), 200)
@@ -44,11 +46,11 @@ def list_jobs(
         text(
             """
             SELECT p.id, p.company_name, p.title, p.location, p.department, p.source,
-                   p.apply_url, p.first_seen_at, p.posted_at, p.is_campus, p.is_intern, p.org_level,
+                   p.apply_url, p.first_seen_at, p.posted_at, p.is_campus, p.is_intern, p.is_active, p.org_level,
                    m.match_score, m.priority_score, m.status AS match_status, m.id AS match_id
             FROM job_postings p
             LEFT JOIN job_matches m ON m.posting_id = p.id AND m.user_id = :uid
-            WHERE p.is_active = true
+            WHERE (CAST(:only_active AS text) IS NULL OR p.is_active)
               AND (CAST(:q AS text) IS NULL OR p.title ILIKE '%'||:q||'%' OR p.description_text ILIKE '%'||:q||'%')
               AND (CAST(:co AS text) IS NULL OR p.company_name ILIKE '%'||:co||'%'
                    OR (CAST(:co_orig AS text) IS NULL OR p.company_name ILIKE '%'||:co_orig||'%'))
@@ -65,13 +67,13 @@ def list_jobs(
             """
         ),
         {"uid": user["id"], "q": q, "co": company, "co_orig": company_orig, "ca": campus, "og": org,
-         "jt": job_type, "src": source, "lim": limit, "off": offset},
+         "jt": job_type, "src": source, "only_active": only_active, "lim": limit, "off": offset},
     ).mappings().all()
     total = db.execute(
         text(
             """
             SELECT COUNT(*) AS n FROM job_postings p
-            WHERE p.is_active = true
+            WHERE (CAST(:only_active AS text) IS NULL OR p.is_active)
               AND (CAST(:q AS text) IS NULL OR p.title ILIKE '%'||:q||'%' OR p.description_text ILIKE '%'||:q||'%')
               AND (CAST(:co AS text) IS NULL OR p.company_name ILIKE '%'||:co||'%'
                    OR (CAST(:co_orig AS text) IS NULL OR p.company_name ILIKE '%'||:co_orig||'%'))
@@ -103,6 +105,7 @@ def list_jobs(
                 "priority_score": r["priority_score"],
                 "is_campus": r["is_campus"],
                 "is_intern": r["is_intern"],
+                "is_active": r["is_active"],
                 "org_level": r["org_level"],
                 "match_status": r["match_status"],
                 "match_id": str(r["match_id"]) if r["match_id"] else None,

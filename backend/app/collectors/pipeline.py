@@ -84,8 +84,20 @@ def _is_campus_posting(p: base.JobPosting) -> bool:
     return any(h.lower() in title for h in CAMPUS_TITLE_HINTS)
 
 
-def store_postings(db: Session, postings: list[base.JobPosting]) -> dict:
-    """按 (source, external_id) upsert；更新 last_seen_at/is_active。"""
+FULL_INVENTORY_SOURCES = {
+    "beisen", "bosera", "citics", "gtht", "zofund", "huatai_pb",
+    "feishu", "moka", "greenhouse", "lever", "workday",
+    # 注意：iguopin 有平台分頁限流（單次非全量），不啟用下架判定
+}
+
+
+def store_postings(db: Session, postings: list[base.JobPosting],
+                   deactivate_missing: bool = False) -> dict:
+    """按 (source, external_id) upsert；更新 last_seen_at/is_active。
+
+    deactivate_missing=True（完整清單型來源）時：本次未出現的同源同公司崗位
+    標記 is_active=false（過期下架；保留在崗位庫，僅從匹配中消失）。
+    """
     new = updated = 0
     seen: dict[tuple[str, str], str] = {}
     for p in postings:
@@ -154,6 +166,22 @@ def store_postings(db: Session, postings: list[base.JobPosting]) -> dict:
             new += 1
     db.commit()
     _mark_stale(db, postings)
+    if deactivate_missing:
+        by_company: dict[tuple[str, str], set[str]] = {}
+        for p in postings:
+            if p.external_id:
+                by_company.setdefault((p.source, p.company_name), set()).add(p.external_id)
+        for (src, cname), ids in by_company.items():
+            ids_json = [str(x) for x in ids]
+            db.execute(
+                text(
+                    "UPDATE job_postings SET is_active=false "
+                    "WHERE source=:s AND company_name=:c AND is_active=true "
+                    "AND external_id != ALL(:ids)"
+                ),
+                {"s": src, "c": cname, "ids": ids_json},
+            )
+        db.commit()
     return {"new": new, "updated": updated}
 
 
@@ -227,7 +255,8 @@ def collect_for_user(db: Session, user_id: str, company_name: str | None = None,
         started = datetime.now(timezone.utc)
         try:
             postings = collector.collect(target)
-            stats = store_postings(db, postings)
+            stats = store_postings(db, postings,
+                                   deactivate_missing=platform in FULL_INVENTORY_SOURCES)
             report["collected"] += len(postings)
             report["new"] += stats["new"]
             report["updated"] += stats["updated"]
