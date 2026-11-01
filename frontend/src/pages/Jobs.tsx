@@ -74,7 +74,10 @@ export default function Jobs() {
   }
   useEffect(() => {
     api<{ sources: { code: string; label: string }[] }>("/api/jobs/sources")
-      .then((d) => setSources(d.sources || []))
+      .then((d) => {
+        const seen = new Set<string>();
+        setSources((d.sources || []).filter((s) => (seen.has(s.label) ? false : (seen.add(s.label), true))));
+      })
       .catch(() => {});
   }, []);
   useEffect(() => {
