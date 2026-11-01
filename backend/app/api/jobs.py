@@ -87,7 +87,7 @@ def list_jobs(
               AND (CAST(:src AS text) IS NULL OR p.source = :src)
             """
         ),
-        {"q": q, "co": company, "co_orig": company_orig, "ca": campus, "og": org, "jt": job_type, "src": source},
+        {"q": q, "co": company, "co_orig": company_orig, "ca": campus, "og": org, "jt": job_type, "src": source, "only_active": only_active},
     ).mappings().one()["n"]
     return {
         "items": [
