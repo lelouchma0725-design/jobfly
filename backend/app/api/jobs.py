@@ -59,6 +59,7 @@ def list_jobs(
               AND (CAST(:ca AS text) IS NULL OR (CAST(:ca AS text)='campus' AND p.is_campus)
                    OR (CAST(:ca AS text)='society' AND NOT p.is_campus))
               AND (CAST(:og AS text) IS NULL OR p.org_level = :og)
+              AND (CAST(:src AS text) IS NULL OR p.source = :src)
             ORDER BY p.first_seen_at DESC
             LIMIT :lim OFFSET :off
             """
