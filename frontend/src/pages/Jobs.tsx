@@ -37,6 +37,8 @@ export default function Jobs() {
   const [q, setQ] = useState("");
   const [company, setCompany] = useState("");
   const [campus, setCampus] = useState("");
+  const [source, setSource] = useState("");
+  const [sources, setSources] = useState<{ code: string; label: string }[]>([]);
   const [org, setOrg] = useState("");
   const [detail, setDetail] = useState<JobDetail | null>(null);
   const [msg, setMsg] = useState("");
@@ -44,11 +46,21 @@ export default function Jobs() {
   const [limit, setLimit] = useState(20);
   const [offset, setOffset] = useState(0);
 
+  async function loadSources() {
+    try {
+      const r = await api<{ sources: { code: string; label: string }[] }>("/api/jobs/sources");
+      setSources(r.sources || []);
+    } catch {
+      /* 忽略 */
+    }
+  }
+
   async function load() {
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     if (q) params.set("q", q);
     if (company) params.set("company", company);
     if (campus) params.set("job_type", campus);
+    if (source) params.set("source", source);
     if (org) params.set("org", org);
     try {
       const res = await api<{ items: Job[]; total: number }>(`/api/jobs?${params}`);
@@ -158,6 +170,12 @@ export default function Jobs() {
               <option value="campus">僅校招</option>
               <option value="society">僅社招</option>
               <option value="intern">僅實習</option>
+            </select>
+            <select value={source} onChange={(e) => setSource(e.target.value)}>
+              <option value="">來源：全部</option>
+              {sources.map((s) => (
+                <option key={s.code} value={s.code}>{s.label}</option>
+              ))}
             </select>
             <select
               value={org}

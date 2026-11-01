@@ -202,6 +202,7 @@ def list_matches(
     limit: int = 20, offset: int = 0,
     campus: str | None = None, org: str | None = None,
     job_type: str | None = None,
+    source: str | None = None,
 ) -> dict:
     company_orig = company
     company = t2s(company) or None
@@ -222,6 +223,7 @@ def list_matches(
                    (CAST(:jt AS text)='campus' AND p.is_campus AND NOT p.is_intern)
                    OR (CAST(:jt AS text)='society' AND NOT p.is_campus AND NOT p.is_intern)
                    OR (CAST(:jt AS text)='intern' AND p.is_intern))
+              AND (CAST(:src AS text) IS NULL OR p.source = :src)
               AND (CAST(:ca AS text) IS NULL OR (CAST(:ca AS text)='campus' AND p.is_campus)
                    OR (CAST(:ca AS text)='society' AND NOT p.is_campus))
               AND (CAST(:og AS text) IS NULL OR p.org_level = :og)
@@ -231,7 +233,7 @@ def list_matches(
             """
         ),
         {"uid": user["id"], "st": status, "co": company, "co_orig": company_orig, "ca": campus, "og": org,
-         "jt": job_type, "lim": limit, "off": offset},
+         "jt": job_type, "src": source, "lim": limit, "off": offset},
     ).mappings().all()
     total = db.execute(
         text(
@@ -245,6 +247,7 @@ def list_matches(
                    (CAST(:jt AS text)='campus' AND p.is_campus AND NOT p.is_intern)
                    OR (CAST(:jt AS text)='society' AND NOT p.is_campus AND NOT p.is_intern)
                    OR (CAST(:jt AS text)='intern' AND p.is_intern))
+              AND (CAST(:src AS text) IS NULL OR p.source = :src)
               AND (CAST(:ca AS text) IS NULL OR (CAST(:ca AS text)='campus' AND p.is_campus)
                    OR (CAST(:ca AS text)='society' AND NOT p.is_campus))
               AND (CAST(:og AS text) IS NULL OR p.org_level = :og)

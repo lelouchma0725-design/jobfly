@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
+from app.core.sources import source_label
 from app.core.textutil import t2s
 from app.core.jsonutil import j
 from app.db import get_db
@@ -32,6 +33,7 @@ def list_jobs(
     user: CurrentUser, db: DB, q: str | None = None, company: str | None = None,
     campus: str | None = None, org: str | None = None,
     job_type: str | None = None,
+    source: str | None = None,
     limit: int = 20, offset: int = 0,
 ) -> dict:
     q_orig, company_orig = q, company
@@ -62,7 +64,7 @@ def list_jobs(
             """
         ),
         {"uid": user["id"], "q": q, "co": company, "co_orig": company_orig, "ca": campus, "og": org,
-         "jt": job_type, "lim": limit, "off": offset},
+         "jt": job_type, "src": source, "lim": limit, "off": offset},
     ).mappings().all()
     total = db.execute(
         text(
@@ -256,3 +258,11 @@ def ingest(user: CurrentUser, db: DB, payload: IngestRequest) -> dict:
             continue
     stats = store_postings(db, posts)
     return {"ok": True, **stats}
+
+@router.get("/sources")
+def list_sources(db: DB) -> dict:
+    """已入庫崗位的來源列表（有數據的平台才顯示）。"""
+    rows = db.execute(
+        text("SELECT DISTINCT source FROM job_postings WHERE is_active = true ORDER BY source")
+    ).all()
+    return {"sources": [{"code": r[0], "label": source_label(r[0])} for r in rows]}

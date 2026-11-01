@@ -54,6 +54,8 @@ export default function Matches() {
   const [total, setTotal] = useState(0);
   const [status, setStatus] = useState("");
   const [campus, setCampus] = useState("");
+  const [source, setSource] = useState("");
+  const [sources, setSources] = useState<{ code: string; label: string }[]>([]);
   const [org, setOrg] = useState("");
   const [companyInput, setCompanyInput] = useState("");
   const [company, setCompany] = useState("");
@@ -83,6 +85,7 @@ export default function Matches() {
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     if (status) params.set("status", status);
     if (campus) params.set("job_type", campus);
+    if (source) params.set("source", source);
     if (org) params.set("org", org);
     if (company) params.set("company", company);
     try {
@@ -163,6 +166,12 @@ export default function Matches() {
               <option value="campus">僅校招</option>
               <option value="society">僅社招</option>
               <option value="intern">僅實習</option>
+            </select>
+            <select value={source} onChange={(e) => setSource(e.target.value)}>
+              <option value="">來源：全部</option>
+              {sources.map((s) => (
+                <option key={s.code} value={s.code}>{s.label}</option>
+              ))}
             </select>
             <select
               value={org}
