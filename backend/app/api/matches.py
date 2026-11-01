@@ -253,7 +253,7 @@ def list_matches(
               AND (CAST(:og AS text) IS NULL OR p.org_level = :og)
             """
         ),
-        {"uid": user["id"], "st": status, "co": company, "co_orig": company_orig, "ca": campus, "og": org, "jt": job_type},
+        {"uid": user["id"], "st": status, "co": company, "co_orig": company_orig, "ca": campus, "og": org, "jt": job_type, "src": source},
     ).mappings().one()["n"]
     return {
         "items": [
