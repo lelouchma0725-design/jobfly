@@ -12,6 +12,7 @@ SOURCE_LABELS: dict[str, str] = {
     "bosera": "北森招聘雲",
     "feishu": "飛書招聘",
     "moka": "Moka招聘",
+    "job51": "前程無憂",
     "greenhouse": "Greenhouse",
     "lever": "Lever",
     "workday": "Workday",

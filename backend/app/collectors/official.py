@@ -27,6 +27,7 @@ _ATS_HINTS = (
     ("zofund", ("zofund.zhiye.com",)),
     ("iguopin", ("iguopin.com", "gp-api.iguopin.com")),
     ("moka", ("mokahr.com", "app.mokahr.com")),
+    ("job51", ("51job.com", "we.51job.com")),
 )
 
 GENERIC_LINK_LIMIT = 10  # 通用採集每站最多抓取詳情數
