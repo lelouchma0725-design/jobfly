@@ -1,0 +1,41 @@
+{
+  "format": "docx",
+  "verdict": "pass",
+  "checks": [
+    {
+      "id": "package",
+      "status": "pass"
+    },
+    {
+      "id": "contains",
+      "status": "pass",
+      "text": "\u586b\u8868\u8d44\u6599\u4e00\u952e\u590d\u5236"
+    },
+    {
+      "id": "contains",
+      "status": "pass",
+      "text": "AES-256-GCM"
+    }
+  ],
+  "summary": {
+    "paragraphs": 27,
+    "tables": [],
+    "sections": [
+      {
+        "page_twips": {
+          "w": "11906",
+          "h": "16838"
+        },
+        "margins_twips": {
+          "top": "1134",
+          "right": "1247",
+          "bottom": "1134",
+          "left": "1247",
+          "header": "720",
+          "footer": "720",
+          "gutter": "0"
+        }
+      }
+    ]
+  }
+}

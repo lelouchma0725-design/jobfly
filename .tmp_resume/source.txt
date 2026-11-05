@@ -1,0 +1,2766 @@
+[Normal] """JobsComing backend application package."""
+[Normal] """API 路由包。"""
+[Normal] """平台帳號加密庫（FR-1d / 主程序同步 GAP-2）。
+[Normal] - 寫入：為用戶生成/取回 DEK → 信封加密 → 落庫（密文）
+[Normal] - 讀取：僅返回掩碼後的帳號標識，永不下發密文/明文
+[Normal] - 解密密文只發生在採集/投遞 Worker（P3/P4），通過 get_dek_for_user 取用
+[Normal] """
+[Normal] from __future__ import annotations
+[Normal] from typing import Annotated
+[Normal] from fastapi import APIRouter, Depends, HTTPException, Request
+[Normal] from sqlalchemy import text
+[Normal] from sqlalchemy.orm import Session
+[Normal] from app.core.audit import log_audit
+[Normal] from app.core.auth import get_current_user
+[Normal] from app.core.security import (
+[Normal]     decrypt_field,
+[Normal]     encrypt_field,
+[Normal]     encrypt_json,
+[Normal]     get_dek_for_user,
+[Normal] )
+[Normal] from app.db import get_db
+[Normal] from app.schemas.accounts import PLATFORMS, AccountCreate, AccountUpdate
+[Normal] router = APIRouter(prefix="/accounts", tags=["accounts"])
+[Normal] CurrentUser = Annotated[dict, Depends(get_current_user)]
+[Normal] DB = Annotated[Session, Depends(get_db)]
+[Normal] def _mask(identifier: str) -> str:
+[Normal]     if len(identifier) <= 4:
+[Normal]         return "****"
+[Normal]     return identifier[:2] + "****" + identifier[-2:]
+[Normal] @router.get("")
+[Normal] def list_accounts(user: CurrentUser, db: DB) -> list[dict]:
+[Normal]     rows = db.execute(
+[Normal]         text(
+[Normal]             "SELECT id, platform, label, login_identifier_enc, status, last_login_at, last_error "
+[Normal]             "FROM platform_accounts WHERE user_id = :uid ORDER BY created_at"
+[Normal]         ),
+[Normal]         {"uid": user["id"]},
+[Normal]     ).mappings().all()
+[Normal]     dek = get_dek_for_user(db, user["id"])
+[Normal]     result = []
+[Normal]     for r in rows:
+[Normal]         result.append(
+[Normal]             {
+[Normal]                 "id": str(r["id"]),
+[Normal]                 "platform": r["platform"],
+[Normal]                 "label": r["label"],
+[Normal]                 "login_masked": _mask(decrypt_field(dek, r["login_identifier_enc"])),
+[Normal]                 "status": r["status"],
+[Normal]                 "last_login_at": r["last_login_at"].isoformat() if r["last_login_at"] else None,
+[Normal]                 "last_error": r["last_error"],
+[Normal]             }
+[Normal]         )
+[Normal]     return result
+[Normal] @router.post("", status_code=201)
+[Normal] def create_account(user: CurrentUser, db: DB, payload: AccountCreate, request: Request) -> dict:
+[Normal]     if payload.platform not in PLATFORMS:
+[Normal]         raise HTTPException(422, f"platform 必須是 {PLATFORMS} 之一")
+[Normal]     dek = get_dek_for_user(db, user["id"])
+[Normal]     row_id = db.execute(
+[Normal]         text(
+[Normal]             """
+[Normal]             INSERT INTO platform_accounts
+[Normal]               (user_id, platform, label, login_identifier_enc, password_enc, meta_enc)
+[Normal]             VALUES (:uid, :platform, :label, :ident, :pwd, :meta)
+[Normal]             RETURNING id
+[Normal]             """
+[Normal]         ),
+[Normal]         {
+[Normal]             "uid": user["id"],
+[Normal]             "platform": payload.platform,
+[Normal]             "label": payload.label,
+[Normal]             "ident": encrypt_field(dek, payload.login_identifier),
+[Normal]             "pwd": encrypt_field(dek, payload.password),
+[Normal]             "meta": encrypt_json(dek, payload.meta) if payload.meta is not None else None,
+[Normal]         },
+[Normal]     ).mappings().one()
+[Normal]     db.commit()
+[Normal]     log_audit(db, user["id"], "account.create", "platform_accounts", str(row_id["id"]),
+[Normal]               {"platform": payload.platform}, request.client.host if request.client else None)
+[Normal]     return {"id": str(row_id["id"])}
+[Normal] @router.patch("/{account_id}")
+[Normal] def update_account(
+[Normal]     user: CurrentUser, db: DB, account_id: str, payload: AccountUpdate, request: Request
+[Normal] ) -> dict:
+[Normal]     exists = db.execute(
+[Normal]         text("SELECT 1 FROM platform_accounts WHERE id = :aid AND user_id = :uid"),
+[Normal]         {"aid": account_id, "uid": user["id"]},
+[Normal]     ).first()
+[Normal]     if not exists:
+[Normal]         raise HTTPException(404, "帳號不存在")
+[Normal]     dek = get_dek_for_user(db, user["id"])
+[Normal]     fields = payload.model_dump(exclude_none=True)
+[Normal]     sets, params = [], {"aid": account_id, "uid": user["id"]}
+[Normal]     if "label" in fields:
+[Normal]         sets.append("label = :label")
+[Normal]         params["label"] = fields["label"]
+[Normal]     if "login_identifier" in fields:
+[Normal]         sets.append("login_identifier_enc = :ident")
+[Normal]         params["ident"] = encrypt_field(dek, fields["login_identifier"])
+[Normal]     if "password" in fields:
+[Normal]         sets.append("password_enc = :pwd")
+[Normal]         params["pwd"] = encrypt_field(dek, fields["password"])
+[Normal]     if "meta" in fields:
+[Normal]         sets.append("meta_enc = :meta")
+[Normal]         params["meta"] = encrypt_json(dek, fields["meta"]) if fields["meta"] is not None else None
+[Normal]     if sets:
+[Normal]         sets.append("status = 'pending_verify'")  # 憑據變更後需重新驗證登錄態
+[Normal]         db.execute(
+[Normal]             text(
+[Normal]                 f"UPDATE platform_accounts SET {', '.join(sets)}, updated_at = now() "
+[Normal]                 "WHERE id = :aid AND user_id = :uid"
+[Normal]             ),
+[Normal]             params,
+[Normal]         )
+[Normal]         db.commit()
+[Normal]         log_audit(db, user["id"], "account.update", "platform_accounts", account_id,
+[Normal]                   {}, request.client.host if request.client else None)
+[Normal]     return {"ok": True}
+[Normal] @router.delete("/{account_id}", status_code=204)
+[Normal] def delete_account(user: CurrentUser, db: DB, account_id: str, request: Request) -> None:
+[Normal]     row = db.execute(
+[Normal]         text("DELETE FROM platform_accounts WHERE id = :aid AND user_id = :uid RETURNING id"),
+[Normal]         {"aid": account_id, "uid": user["id"]},
+[Normal]     ).first()
+[Normal]     if not row:
+[Normal]         raise HTTPException(404, "帳號不存在")
+[Normal]     db.commit()
+[Normal]     log_audit(db, user["id"], "account.delete", "platform_accounts", account_id,
+[Normal]               {}, request.client.host if request.client else None)
+[Normal] """管理後台端點（GAP-10）：用戶審計、適配器健康、投遞成功率、LLM 用量、審計日誌。"""
+[Normal] from __future__ import annotations
+[Normal] from typing import Annotated
+[Normal] from fastapi import APIRouter, Depends, HTTPException
+[Normal] from sqlalchemy import text
+[Normal] from sqlalchemy.orm import Session
+[Normal] from app.core.auth import get_current_user
+[Normal] from app.core.llm import usage as llm_usage
+[Normal] from app.db import get_db
+[Normal] router = APIRouter(prefix="/admin", tags=["admin"])
+[Normal] CurrentUser = Annotated[dict, Depends(get_current_user)]
+[Normal] DB = Annotated[Session, Depends(get_db)]
+[Normal] def require_admin(user: CurrentUser) -> dict:
+[Normal]     if user.get("role") != "admin":
+[Normal]         raise HTTPException(403, "需要管理員權限")
+[Normal]     return user
+[Normal] Admin = Annotated[dict, Depends(require_admin)]
+[Normal] @router.get("/stats")
+[Normal] def stats(admin: Admin, db: DB) -> dict:
+[Normal]     one = lambda sql, **kw: db.execute(text(sql), kw).mappings().one()  # noqa: E731
+[Normal]     users = one("SELECT COUNT(*) AS n FROM profiles WHERE deleted_at IS NULL")["n"]
+[Normal]     active_postings = one("SELECT COUNT(*) AS n FROM job_postings WHERE is_active=true")["n"]
+[Normal]     matches_24h = one(
+[Normal]         "SELECT COUNT(*) AS n FROM job_matches WHERE created_at >= now() - interval '24 hours'"
+[Normal]     )["n"]
+[Normal]     apps = one(
+[Normal]         """
+[Normal]         SELECT COUNT(*) FILTER (WHERE submitted_at >= now() - interval '24 hours') AS submitted_24h,
+[Normal]                COUNT(*) AS total FROM applications
+[Normal]         """
+[Normal]     )
+[Normal]     open_tasks = one("SELECT COUNT(*) AS n FROM manual_tasks WHERE status='open'")["n"]
+[Normal]     accounts_issues = one(
+[Normal]         "SELECT COUNT(*) AS n FROM platform_accounts WHERE status IN ('expired','error','locked')"
+[Normal]     )["n"]
+[Normal]     return {
+[Normal]         "users": users,
+[Normal]         "active_postings": active_postings,
+[Normal]         "matches_24h": matches_24h,
+[Normal]         "applications_total": apps["total"],
+[Normal]         "applications_submitted_24h": apps["submitted_24h"],
+[Normal]         "open_manual_tasks": open_tasks,
+[Normal]         "platform_accounts_issue": accounts_issues,
+[Normal]         "llm_usage": llm_usage(),
+[Normal]         "collected_today": one(
+[Normal]             "SELECT COUNT(*) AS n FROM job_postings WHERE first_seen_at::date = now()::date"
+[Normal]         )["n"],
+[Normal]     }
+[Normal] @router.get("/users")
+[Normal] def list_users(admin: Admin, db: DB) -> list[dict]:
+[Normal]     rows = db.execute(
+[Normal]         text(
+[Normal]             """
+[Normal]             SELECT p.id, p.email, p.phone, p.role, p.created_at, p.deleted_at,
+[Normal]                    (SELECT COUNT(*) FROM applications a WHERE a.user_id=p.id) AS apps,
+[Normal]                    (SELECT COUNT(*) FROM job_matches m WHERE m.user_id=p.id) AS matches
+[Normal]             FROM profiles p ORDER BY p.created_at DESC LIMIT 500
+[Normal]             """
+[Normal]         )
+[Normal]     ).mappings().all()
+[Normal]     return [
+[Normal]         {
+[Normal]             "id": str(r["id"]), "email": r["email"], "phone": r["phone"], "role": r["role"],
+[Normal]             "created_at": r["created_at"].isoformat(),
+[Normal]             "disabled": r["deleted_at"] is not None,
+[Normal]             "applications": r["apps"], "matches": r["matches"],
+[Normal]         }
+[Normal]         for r in rows
+[Normal]     ]
+[Normal] @router.patch("/users/{user_id}")
+[Normal] def set_user(admin: Admin, db: DB, user_id: str, disabled: bool | None = None,
+[Normal]              role: str | None = None) -> dict:
+[Normal]     sets, params = [], {"id": user_id}
+[Normal]     if disabled is not None:
+[Normal]         sets.append("deleted_at = " + ("now()" if disabled else "NULL"))
+[Normal]     if role in ("user", "admin"):
+[Normal]         sets.append("role = :role")
+[Normal]         params["role"] = role
+[Normal]     if not sets:
+[Normal]         raise HTTPException(422, "無有效變更")
+[Normal]     row = db.execute(
+[Normal]         text(f"UPDATE profiles SET {', '.join(sets)} WHERE id=:id RETURNING id"),
+[Normal]         params,
+[Normal]     ).first()
+[Normal]     if not row:
+[Normal]         raise HTTPException(404, "用戶不存在")
+[Normal]     db.commit()
+[Normal]     return {"ok": True}
+[Normal] @router.get("/adapters")
+[Normal] def adapters(admin: Admin, db: DB) -> list[dict]:
+[Normal]     rows = db.execute(
+[Normal]         text("SELECT * FROM adapter_health ORDER BY adapter")
+[Normal]     ).mappings().all()
+[Normal]     return [
+[Normal]         {
+[Normal]             "adapter": r["adapter"], "last_run_at": r["last_run_at"].isoformat() if r["last_run_at"] else None,
+[Normal]             "last_success_at": r["last_success_at"].isoformat() if r["last_success_at"] else None,
+[Normal]             "success_count": r["success_count"], "fail_count": r["fail_count"],
+[Normal]             "last_error": r["last_error"], "avg_duration_ms": r["avg_duration_ms"],
+[Normal]         }
+[Normal]         for r in rows
+[Normal]     ]
+[Normal] @router.get("/audit")
+[Normal] def audit(admin: Admin, db: DB, limit: int = 100) -> list[dict]:
+[Normal]     rows = db.execute(
+[Normal]         text(
+[Normal]             """
+[Normal]             SELECT a.created_at, a.action, a.entity, a.entity_id, a.meta, p.email
+[Normal]             FROM audit_logs a LEFT JOIN profiles p ON p.id = a.actor_user_id
+[Normal]             ORDER BY a.created_at DESC LIMIT :lim
+[Normal]             """
+[Normal]         ),
+[Normal]         {"lim": min(limit, 500)},
+[Normal]     ).mappings().all()
+[Normal]     return [
+[Normal]         {
+[Normal]             "at": r["created_at"].isoformat(), "actor": r["email"], "action": r["action"],
+[Normal]             "entity": r["entity"], "entity_id": r["entity_id"], "meta": r["meta"],
+[Normal]         }
+[Normal]         for r in rows
+[Normal]     ]
+[Normal] @router.get("/collect-jobs")
+[Normal] def collect_jobs(admin: Admin, db: DB, limit: int = 50) -> list[dict]:
+[Normal]     rows = db.execute(
+[Normal]         text(
+[Normal]             "SELECT kind, status, payload, scheduled_at, started_at, finished_at, error "
+[Normal]             "FROM collect_jobs ORDER BY created_at DESC LIMIT :lim"
+[Normal]         ),
+[Normal]         {"lim": min(limit, 200)},
+[Normal]     ).mappings().all()
+[Normal]     return [
+[Normal]         {
+[Normal]             "kind": r["kind"], "status": r["status"], "payload": r["payload"],
+[Normal]             "started_at": r["started_at"].isoformat() if r["started_at"] else None,
+[Normal]             "finished_at": r["finished_at"].isoformat() if r["finished_at"] else None,
+[Normal]             "error": r["error"],
+[Normal]         }
+[Normal]         for r in rows
+[Normal]     ]
+[Normal] """投遞記錄與觸發端點（FR-3b/3c）。"""
+[Normal] from __future__ import annotations
+[Normal] from typing import Annotated
+[Normal] from fastapi import APIRouter, Depends, HTTPException
+[Normal] from sqlalchemy import text
+[Normal] from sqlalchemy.orm import Session
+[Normal] from app.core.auth import get_current_user
+[Normal] from app.db import get_db
+[Normal] from app.services.apply_engine import (
+[Normal]     create_applications_from_matches,
+[Normal]     process_queue,
+[Normal]     run_application,
+[Normal] )
+[Normal] router = APIRouter(prefix="/applications", tags=["applications"])
+[Normal] CurrentUser = Annotated[dict, Depends(get_current_user)]
+[Normal] DB = Annotated[Session, Depends(get_db)]
+[Normal] @router.get("")
+[Normal] def list_applications(
+[Normal]     user: CurrentUser, db: DB, status: str | None = None,
+[Normal]     limit: int = 20, offset: int = 0,
+[Normal] ) -> dict:
+[Normal]     limit = min(max(limit, 1), 100)
+[Normal]     rows = db.execute(
+[Normal]         text(
+[Normal]             """
+[Normal]             SELECT a.id, a.status, a.status_reason, a.attempts_count, a.next_retry_at,
+[Normal]                    a.submitted_at, a.external_ref, a.created_at,
+[Normal]                    p.company_name, p.title, p.location, p.apply_url, p.source,
+[Normal]                    m.match_score, rv.id AS resume_version_id
+[Normal]             FROM applications a
+[Normal]             JOIN job_postings p ON p.id = a.posting_id
+[Normal]             LEFT JOIN job_matches m ON m.id = a.match_id
+[Normal]             LEFT JOIN resume_versions rv ON rv.id = a.resume_version_id
+[Normal]             WHERE a.user_id = :uid AND (CAST(:st AS text) IS NULL OR CAST(a.status AS text) = :st)
+[Normal]             ORDER BY a.created_at DESC
+[Normal]             LIMIT :lim OFFSET :off
+[Normal]             """
+[Normal]         ),
+[Normal]         {"uid": user["id"], "st": status, "lim": limit, "off": offset},
+[Normal]     ).mappings().all()
+[Normal]     total = db.execute(
+[Normal]         text(
+[Normal]             """
+[Normal]             SELECT COUNT(*) AS n FROM applications a
+[Normal]             WHERE a.user_id = :uid AND (CAST(:st AS text) IS NULL OR CAST(a.status AS text) = :st)
+[Normal]             """
+[Normal]         ),
+[Normal]         {"uid": user["id"], "st": status},
+[Normal]     ).mappings().one()["n"]
+[Normal]     return {
+[Normal]         "items": [
+[Normal]             {
+[Normal]                 "id": str(r["id"]),
+[Normal]                 "status": r["status"],
+[Normal]                 "status_reason": r["status_reason"],
+[Normal]                 "attempts_count": r["attempts_count"],
+[Normal]                 "next_retry_at": r["next_retry_at"].isoformat() if r["next_retry_at"] else None,
+[Normal]                 "submitted_at": r["submitted_at"].isoformat() if r["submitted_at"] else None,
+[Normal]                 "external_ref": r["external_ref"],
+[Normal]                 "created_at": r["created_at"].isoformat(),
+[Normal]                 "company_name": r["company_name"],
+[Normal]                 "title": r["title"],
+[Normal]                 "location": r["location"],
+[Normal]                 "apply_url": r["apply_url"],
+[Normal]                 "source": r["source"],
+[Normal]                 "match_score": r["match_score"],
+[Normal]                 "resume_version_id": str(r["resume_version_id"]) if r["resume_version_id"] else None,
+[Normal]             }
+[Normal]             for r in rows
+[Normal]         ],
+[Normal]         "total": total,
+[Normal]         "limit": limit,
+[Normal]         "offset": offset,
+[Normal]     }
+[Normal] @router.post("/run", status_code=202)
+[Normal] def run_now(user: CurrentUser, db: DB) -> dict:
+[Normal]     """手動觸發：按當前設置從匹配結果生成投遞隊列並立即處理。"""
+[Normal]     created = create_applications_from_matches(db, user["id"])
+[Normal]     processed = process_queue(db, user_id=user["id"])
+[Normal]     return {"created": created, "processed": processed}
+[Normal] @router.post("/{application_id}/retry", status_code=202)
+[Normal] def retry_application(user: CurrentUser, db: DB, application_id: str) -> dict:
+[Normal]     row = db.execute(
+[Normal]         text("SELECT status FROM applications WHERE id=:id AND user_id=:uid"),
+[Normal]         {"id": application_id, "uid": user["id"]},
+[Normal]     ).mappings().first()
+[Normal]     if not row:
+[Normal]         raise HTTPException(404, "投遞記錄不存在")
+[Normal]     if row["status"] in ("submitted", "in_progress"):
+[Normal]         return {"skipped": row["status"]}
+[Normal]     out = run_application(db, application_id, force=True)
+[Normal]     return out
+[Normal] @router.post("/{application_id}/abort", status_code=200)
+[Normal] def abort_application(user: CurrentUser, db: DB, application_id: str) -> dict:
+[Normal]     row = db.execute(
+[Normal]         text(
+[Normal]             "UPDATE applications SET status='aborted', status_reason='用戶手動取消', updated_at=now() "
+[Normal]             "WHERE id=:id AND user_id=:uid AND status NOT IN ('submitted','aborted') RETURNING id"
+[Normal]         ),
+[Normal]         {"id": application_id, "uid": user["id"]},
+[Normal]     ).first()
+[Normal]     if not row:
+[Normal]         raise HTTPException(404, "投遞記錄不存在或已結束")
+[Normal]     db.commit()
+[Normal]     return {"ok": True}
+[Normal] """認證代理（關鍵架構）：前端不直連 supabase.co，全部 auth 請求經後端轉發。
+[Normal] 原因：部分地區網絡無法直達 *.supabase.co（實測本網絡連接被重置）。
+[Normal] 後端部署於美區（Render），可正常訪問 Supabase Auth API。
+[Normal] """
+[Normal] from __future__ import annotations
+[Normal] import httpx
+[Normal] from fastapi import APIRouter, HTTPException, Request
+[Normal] from pydantic import BaseModel
+[Normal] from app.config import settings
+[Normal] router = APIRouter(prefix="/auth", tags=["auth"])
+[Normal] _SB = settings.supabase_url.rstrip("/")
+[Normal] def _anon_key() -> str:
+[Normal]     return settings.supabase_anon_key
+[Normal] def _anon_headers() -> dict:
+[Normal]     k = _anon_key()
+[Normal]     return {"apikey": k, "Authorization": f"Bearer {k}", "Content-Type": "application/json"}
+[Normal] class Credentials(BaseModel):
+[Normal]     email: str
+[Normal]     password: str
+[Normal] class MagicLinkRequest(BaseModel):
+[Normal]     email: str
+[Normal] class RefreshRequest(BaseModel):
+[Normal]     refresh_token: str
+[Normal] @router.post("/signup")
+[Normal] def signup(payload: Credentials) -> dict:
+[Normal]     try:
+[Normal]         resp = httpx.post(
+[Normal]             f"{_SB}/auth/v1/signup", headers=_anon_headers(),
+[Normal]             json={"email": payload.email, "password": payload.password}, timeout=20,
+[Normal]         )
+[Normal]     except httpx.HTTPError as exc:
+[Normal]         raise HTTPException(502, f"無法連接 Supabase Auth（服務端網絡問題）: {exc}") from exc
+[Normal]     if resp.status_code >= 400:
+[Normal]         raise HTTPException(resp.status_code, _err(resp))
+[Normal]     data = resp.json()
+[Normal]     if not data.get("session"):
+[Normal]         return {"status": "email_confirmation_required", "user": data.get("user")}
+[Normal]     return {"status": "ok", "session": data["session"], "user": data["user"]}
+[Normal] @router.post("/signin")
+[Normal] def signin(payload: Credentials) -> dict:
+[Normal]     try:
+[Normal]         resp = httpx.post(
+[Normal]             f"{_SB}/auth/v1/token?grant_type=password", headers=_anon_headers(),
+[Normal]             json={"email": payload.email, "password": payload.password}, timeout=20,
+[Normal]         )
+[Normal]     except httpx.HTTPError as exc:
+[Normal]         raise HTTPException(502, f"無法連接 Supabase Auth（服務端網絡問題）: {exc}") from exc
+[Normal]     if resp.status_code >= 400:
+[Normal]         raise HTTPException(resp.status_code, _err(resp))
+[Normal]     return resp.json()
+[Normal] @router.post("/magic-link")
+[Normal] def magic_link(payload: MagicLinkRequest) -> dict:
+[Normal]     try:
+[Normal]         resp = httpx.post(
+[Normal]             f"{_SB}/auth/v1/magiclink", headers=_anon_headers(),
+[Normal]             json={"email": payload.email, "emailRedirectTo": settings.frontend_url}, timeout=20,
+[Normal]         )
+[Normal]     except httpx.HTTPError as exc:
+[Normal]         raise HTTPException(502, f"無法連接 Supabase Auth（服務端網絡問題）: {exc}") from exc
+[Normal]     if resp.status_code >= 400:
+[Normal]         raise HTTPException(resp.status_code, _err(resp))
+[Normal]     return {"status": "sent"}
+[Normal] @router.post("/refresh")
+[Normal] def refresh(payload: RefreshRequest) -> dict:
+[Normal]     try:
+[Normal]         resp = httpx.post(
+[Normal]             f"{_SB}/auth/v1/token?grant_type=refresh_token", headers=_anon_headers(),
+[Normal]             json={"refresh_token": payload.refresh_token}, timeout=20,
+[Normal]         )
+[Normal]     except httpx.HTTPError as exc:
+[Normal]         raise HTTPException(502, f"無法連接 Supabase Auth（服務端網絡問題）: {exc}") from exc
+[Normal]     if resp.status_code >= 400:
+[Normal]         raise HTTPException(resp.status_code, _err(resp))
+[Normal]     return resp.json()
+[Normal] class AdminCreate(BaseModel):
+[Normal]     email: str
+[Normal]     password: str
+[Normal]     secret: str
+[Normal] @router.post("/admin-create")
+[Normal] def admin_create(payload: AdminCreate) -> dict:
+[Normal]     """維護端點：用 service_role 走 GoTrue 管理 API 正規創建用戶（含郵箱確認）。
+[Normal]     僅供管理員運維使用，secret 由 OPS_SECRET 環境變量保護。
+[Normal]     """
+[Normal]     if not settings.ops_secret or payload.secret != settings.ops_secret:
+[Normal]         raise HTTPException(403, "forbidden")
+[Normal]     try:
+[Normal]         resp = httpx.post(
+[Normal]             f"{_SB}/auth/v1/admin/users",
+[Normal]             headers={
+[Normal]                 "apikey": settings.supabase_service_role_key,
+[Normal]                 "Authorization": f"Bearer {settings.supabase_service_role_key}",
+[Normal]                 "Content-Type": "application/json",
+[Normal]             },
+[Normal]             json={"email": payload.email, "password": payload.password, "email_confirm": True},
+[Normal]             timeout=25,
+[Normal]         )
+[Normal]     except httpx.HTTPError as exc:
+[Normal]         raise HTTPException(502, f"無法連接 Supabase Auth: {exc}") from exc
+[Normal]     try:
+[Normal]         body = resp.json()
+[Normal]     except Exception:  # noqa: BLE001
+[Normal]         body = resp.text[:300]
+[Normal]     return {"status": resp.status_code, "body": body}
+[Normal] def _err(resp: httpx.Response) -> str:
+[Normal]     try:
+[Normal]         return resp.json().get("msg") or resp.json().get("error_description") or resp.text[:300]
+[Normal]     except Exception:  # noqa: BLE001
+[Normal]         return resp.text[:300]
+[Normal] class AdminResetRequest(BaseModel):
+[Normal]     secret: str
+[Normal]     email: str
+[Normal]     new_password: str
+[Normal] @router.post("/admin-reset-password")
+[Normal] def admin_reset_password(payload: AdminResetRequest) -> dict:
+[Normal]     """維護端點：管理員重置用戶密碼（service_role 管理 API）。"""
+[Normal]     if not settings.ops_secret or payload.secret != settings.ops_secret:
+[Normal]         raise HTTPException(403, "forbidden")
+[Normal]     if len(payload.new_password) < 6:
+[Normal]         raise HTTPException(422, "密碼至少 6 位")
+[Normal]     headers = {
+[Normal]         "apikey": settings.supabase_service_role_key,
+[Normal]         "Authorization": f"Bearer {settings.supabase_service_role_key}",
+[Normal]         "Content-Type": "application/json",
+[Normal]     }
+[Normal]     try:
+[Normal]         # 找用戶 id（分頁列出）
+[Normal]         user_id = None
+[Normal]         page = 1
+[Normal]         while page <= 10:
+[Normal]             r = httpx.get(
+[Normal]                 f"{_SB}/auth/v1/admin/users?per_page=200&page={page}",
+[Normal]                 headers=headers, timeout=25,
+[Normal]             )
+[Normal]             if r.status_code != 200:
+[Normal]                 return {"status": r.status_code, "body": r.text[:300]}
+[Normal]             users = r.json().get("users") or []
+[Normal]             hit = next((u for u in users if (u.get("email") or "").lower() == payload.email.lower()), None)
+[Normal]             if hit:
+[Normal]                 user_id = hit["id"]
+[Normal]                 break
+[Normal]             if not users or len(users) < 200:
+[Normal]                 break
+[Normal]             page += 1
+[Normal]         if not user_id:
+[Normal]             raise HTTPException(404, "找不到該郵箱用戶")
+[Normal]         r = httpx.put(
+[Normal]             f"{_SB}/auth/v1/admin/users/{user_id}",
+[Normal]             headers=headers,
+[Normal]             json={"password": payload.new_password},
+[Normal]             timeout=25,
+[Normal]         )
+[Normal]         if r.status_code != 200:
+[Normal]             return {"status": r.status_code, "body": r.text[:300]}
+[Normal]         return {"ok": True, "note": "密碼已重置"}
+[Normal]     except httpx.HTTPError as exc:
+[Normal]         raise HTTPException(502, f"無法連接 Supabase Auth: {exc}") from exc
+[Normal] class ChangePasswordRequest(BaseModel):
+[Normal]     old_password: str
+[Normal]     new_password: str
+[Normal] @router.post("/change-password")
+[Normal] def change_password(user: CurrentUser, db: DB, payload: ChangePasswordRequest, request: Request) -> dict:
+[Normal]     """修改密碼：先驗證舊密碼，再經 GoTrue 更新（配合前端 E2EE 密鑰遷移）。"""
+[Normal]     import httpx as _httpx
+[Normal]     if len(payload.new_password) < 6:
+[Normal]         raise HTTPException(422, "新密碼至少 6 位")
+[Normal]     email = user.get("email")
+[Normal]     # 驗證舊密碼
+[Normal]     try:
+[Normal]         r = _httpx.post(
+[Normal]             f"{settings.supabase_url}/auth/v1/token?grant_type=password",
+[Normal]             headers={"apikey": settings.supabase_anon_key},
+[Normal]             json={"email": email, "password": payload.old_password},
+[Normal]             timeout=20,
+[Normal]         )
+[Normal]     except Exception as exc:  # noqa: BLE001
+[Normal]         raise HTTPException(502, f"驗證服務不可用: {exc}") from exc
+[Normal]     if r.status_code != 200:
+[Normal]         raise HTTPException(401, "舊密碼不正確")
+[Normal]     # 用當前用戶 token 更新密碼
+[Normal]     token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+[Normal]     r = _httpx.put(
+[Normal]         f"{settings.supabase_url}/auth/v1/user",
+[Normal]         headers={"apikey": settings.supabase_anon_key, "Authorization": f"Bearer {token}"},
+[Normal]         json={"password": payload.new_password},
+[Normal]         timeout=20,
+[Normal]     )
+[Normal]     if r.status_code != 200:
+[Normal]         raise HTTPException(502, f"密碼更新失敗: {r.text[:200]}")
+[Normal]     return {"ok": True, "note": "密碼已更新；敏感字段密文已由前端用新密鑰重新加密"}
+[Normal] """AI 求職管家對話端點（首頁 Chatbot）。
+[Normal] LLM 通過工具（function calling）直接操作用戶數據：
+[Normal] 查詢畫像/匹配/投遞/待處理、觸發採集、修改設置、首次使用引導。
+[Normal] """
+[Normal] from __future__ import annotations
+[Normal] import logging
+[Normal] import re
+[Normal] from typing import Annotated
+[Normal] from fastapi import APIRouter, Depends
+[Normal] from pydantic import BaseModel, Field
+[Normal] from sqlalchemy import text
+[Normal] from sqlalchemy.orm import Session
+[Normal] from app.collectors.pipeline import collect_for_user
+[Normal] from app.core.auth import get_current_user
+[Normal] from app.core.jsonutil import j
+[Normal] from app.core.textutil import t2s as _t2s_global
+[Normal] from app.core.llm import chat_json, chat_with_tools
+[Normal] from app.db import SessionLocal, get_db
+[Normal] # 繁→簡 對照（成對排列，索引偶數為繁、奇數為簡）
+[Normal] _T2S_MAP = {
+[Normal]     "產": "产", "品": "品", "經": "经", "理": "理", "開": "开", "發": "发",
+[Normal]     "驗": "验", "數": "数", "據": "据", "應": "应", "屆": "届", "培": "培",
+[Normal]     "訓": "训", "員": "员", "務": "务", "職": "职", "證": "证", "聯": "联",
+[Normal]     "網": "网", "點": "点", "類": "类", "銀": "银", "資": "资", "訊": "讯",
+[Normal]     "質": "质", "動": "动", "範": "范", "組": "组", "織": "织", "級": "级",
+[Normal]     "實": "实", "習": "习", "業": "业", "專": "专", "門": "门", "間": "间",
+[Normal]     "時": "时", "機": "机", "構": "构", "規": "规", "畫": "画", "計": "计",
+[Normal]     "設": "设", "銷": "销", "場": "场", "營": "营", "錢": "钱", "術": "术",
+[Normal]     "歷": "历", "係": "系", "國": "国", "體": "体", "單": "单", "與": "与",
+[Normal]     "讀": "读", "種": "种", "長": "长", "風": "风", "控": "控", "優": "优",
+[Normal]     "權": "权", "廣": "广", "東": "东", "亞": "亚", "險": "险", "斷": "断",
+[Normal]     "檔": "档", "待": "待", "校": "校", "園": "园", "崗": "岗", "簡": "简",
+[Normal]     "選": "选", "擇": "择", "請": "请", "填": "填", "寫": "写", "郵": "邮",
+[Normal]     "箱": "箱", "畢": "毕", "學": "学", "戶": "户", "籍": "籍", "城": "城",
+[Normal]     "市": "市", "農": "农", "村": "村", "金": "金", "融": "融", "練": "练",
+[Normal]     "續": "续", "處": "处", "號": "号", "臺": "台", "灣": "湾", "滬": "沪",
+[Normal]     "深": "深", "圳": "圳", "京": "京", "穗": "穗", "併": "并", "購": "购",
+[Normal]     "債": "债", "財": "财", "部": "部", "門": "门", "歐": "欧", "亞": "亚",
+[Normal]     "會": "会", "計": "计", "師": "师", "簽": "签", "證": "证", "顯": "显",
+[Normal]     "離": "离", "復": "复", "資": "资", "訊": "讯", "億": "亿", "萬": "万",
+[Normal]     "說明": "说明", "適用": "适用", "關係": "关系", "責任": "责任",
+[Normal] }
+[Normal] logger = logging.getLogger(__name__)
+[Normal] router = APIRouter(prefix="/chat", tags=["chat"])
+[Normal] CurrentUser = Annotated[dict, Depends(get_current_user)]
+[Normal] DB = Annotated[Session, Depends(get_db)]
+[Normal] class ChatMessage(BaseModel):
+[Normal]     role: str = Field(pattern="^(user|assistant)$")
+[Normal]     content: str
+[Normal] class ChatRequest(BaseModel):
+[Normal]     messages: list[ChatMessage]
+[Normal]     conversation_id: str | None = None
+[Normal] def _t2s(text: str) -> str:
+[Normal]     """繁體轉簡體（顯式字典，繁簡/常用詞對照）。"""
+[Normal]     return "".join(_T2S_MAP.get(ch, ch) for ch in text)
+[Normal] SYSTEM_PROMPT = """
+[Normal] 你是 JobsComing 的 AI 求職管家，幫助用戶管理簡歷投遞全流程。
+[Normal] 規則：
+[Normal] 1. 用繁體中文、口語化、簡潔（一般 2-5 句）回覆，適當用列表。
+[Normal] 2. 主動使用工具獲取真實數據，不要憑空編造；工具返回的就是事實。
+[Normal] 3. 用戶查詢具體崗位/職位名稱（例如「XX公司的XX崗位」「幫我找XX職位」）時，**必須調用 find_job 工具**，
+[Normal]    用頓號/逗號分隔的多個職位名要逐一調用 find_job 查詢；不要用 list_matches 代替、不要直接說沒有。
+[Normal]    find_job 查不到時，先調 run_collect 採集該公司最新崗位再重新查一次。
+[Normal] 4. 用戶問某個崗位的貼合度時，必須調用 score_job（現場重算，保證數據最新）。
+[Normal] 5. 用戶想了解狀態/執行操作時，先調工具再總結。
+[Normal] 6. 需要用戶操作時給出明確的一步步指引（例如去哪個頁面點什麼）。
+[Normal] 9. 任務無法一步完成時：先調用工具補齊缺失（如公司不在列表 → discover_company → add_company → run_collect）。
+[Normal]    run_collect 啟動後**立即結束回覆**，告訴用戶「已在後台採集、稍後再問我進度」——不要在啟動後馬上輪詢 collect_status（後台剛啟動必然還是 running）。用戶再次詢問進度時才調 collect_status。實在完不成的步驟要明確告訴用戶「缺什麼、去哪補」，禁止只回覆「失敗/報錯」。
+[Normal] 10. 每次回覆最多調用 2-3 個工具，控制總時長，避免超時。
+[Normal] 11. 用戶問「分數為什麼變了/以前是X分現在是Y分」時，直接引用 score_job 返回的「分數變化解釋」回答，不要現場重算。
+[Normal] 7. 首次使用的用戶（沒有畫像/簡歷/關注公司）主動引導：上傳簡歷→生成畫像→添加公司→開啟自動投遞。
+[Normal] 8. 不要洩露任何密碼、token 等敏感信息。
+[Normal] """
+[Normal] def _build_tools(user_id: str, db: Session) -> tuple[list[dict], callable]:
+[Normal]     def get_status(_: dict) -> dict:
+[Normal]         row = db.execute(text(
+[Normal]             """
+[Normal]             SELECT
+[Normal]               (SELECT COUNT(*) FROM candidate_profiles WHERE user_id=:u AND is_current=true) AS has_profile,
+[Normal]               (SELECT COUNT(*) FROM user_documents WHERE user_id=:u AND doc_type='resume' AND deleted_at IS NULL) AS resumes,
+[Normal]               (SELECT COUNT(*) FROM watched_companies WHERE user_id=:u AND is_active=true) AS companies,
+[Normal]               (SELECT COUNT(*) FROM job_matches m WHERE m.user_id=:u AND m.match_score IS NOT NULL AND m.status IN ('new','pushed')) AS new_matches,
+[Normal]               (SELECT COUNT(*) FROM applications a WHERE a.user_id=:u AND a.status='submitted') AS submitted,
+[Normal]               (SELECT COUNT(*) FROM applications a WHERE a.user_id=:u AND a.status IN ('queued','in_progress','failed_retryable')) AS in_progress,
+[Normal]               (SELECT COUNT(*) FROM manual_tasks t WHERE t.user_id=:u AND t.status='open') AS open_tasks
+[Normal]             """
+[Normal]         ), {"u": user_id}).mappings().one()
+[Normal]         st = db.execute(text(
+[Normal]             "SELECT match_threshold, auto_apply_mode FROM user_settings WHERE user_id=:u"
+[Normal]         ), {"u": user_id}).mappings().first()
+[Normal]         return {
+[Normal]             "畫像": "已生成" if row["has_profile"] else "未生成",
+[Normal]             "簡歷": row["resumes"],
+[Normal]             "關注公司": row["companies"],
+[Normal]             "新匹配崗位": row["new_matches"],
+[Normal]             "已投遞": row["submitted"],
+[Normal]             "處理中/排隊": row["in_progress"],
+[Normal]             "待人工處理": row["open_tasks"],
+[Normal]             "貼合度閾值": (st["match_threshold"] if st else 70),
+[Normal]             "投遞模式": (st["auto_apply_mode"] if st else "threshold"),
+[Normal]         }
+[Normal]     def guide(_: dict) -> dict:
+[Normal]         s = get_status({})
+[Normal]         missing = []
+[Normal]         if s["簡歷"] == 0:
+[Normal]             missing.append("上傳簡歷（首頁→我的資料→我的文件）")
+[Normal]         if s["畫像"] == "未生成":
+[Normal]             missing.append("生成 AI 畫像（我的資料→我的畫像→生成畫像）")
+[Normal]         if s["關注公司"] == 0:
+[Normal]             missing.append("添加關注公司（我的資料→關注公司）")
+[Normal]         if s["投遞模式"] == "off":
+[Normal]             missing.append("開啟自動投遞（我的資料→投遞設置→投遞模式）")
+[Normal]         return {"缺失步驟": missing or ["全部完成 ✅"]}
+[Normal]     def run_collect(args: dict) -> dict:
+[Normal]         """後台異步採集（避免同步執行超時）。支持指定公司；公司不在關注列表時返回引導。"""
+[Normal]         import datetime as _dt
+[Normal]         import threading
+[Normal]         company = str(args.get("company") or "").strip()
+[Normal]         # 公司不在關注列表 → 引導添加（不直接失敗）
+[Normal]         if company:
+[Normal]             target = db.execute(
+[Normal]                 text("SELECT id, careers_url FROM watched_companies WHERE user_id=:u "
+[Normal]                      "AND (company_name ILIKE '%'||:co||'%' OR CAST(aliases AS text) ILIKE '%'||:co||'%') LIMIT 1"),
+[Normal]                 {"u": user_id, "co": company},
+[Normal]             ).mappings().first()
+[Normal]             if not target:
+[Normal]                 return {
+[Normal]                     "完成": False,
+[Normal]                     "缺少": f"「{company}」不在你的關注公司列表",
+[Normal]                     "補齊方式": "請用 discover_company 查找其招聘官網 → add_company 添加到關注公司 → 再重新採集。"
+[Normal]                                 "或到「我的資料→關注公司」手動添加。",
+[Normal]                 }
+[Normal]         # 標記採集狀態並在後台執行
+[Normal]         db.execute(
+[Normal]             text(
+[Normal]                 "INSERT INTO user_settings (user_id, collect_state) VALUES (:u, CAST(:st AS jsonb)) "
+[Normal]                 "ON CONFLICT (user_id) DO UPDATE SET collect_state=CAST(:st AS jsonb), updated_at=now()"
+[Normal]             ),
+[Normal]             {"u": user_id, "st": j({"running": True, "finished_at": None, "report": None})},
+[Normal]         )
+[Normal]         db.commit()
+[Normal]         def _bg():
+[Normal]             s = SessionLocal()
+[Normal]             try:
+[Normal]                 report = collect_for_user(s, user_id, company_name=company or None)
+[Normal]                 s.execute(
+[Normal]                     text("UPDATE user_settings SET collect_state=CAST(:st AS jsonb), updated_at=now() WHERE user_id=:u"),
+[Normal]                     {"u": user_id, "st": j({
+[Normal]                         "running": False,
+[Normal]                         "finished_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+[Normal]                         "report": {k: report.get(k) for k in ("new", "updated", "matched", "errors", "collected")},
+[Normal]                     })},
+[Normal]                 )
+[Normal]                 s.commit()
+[Normal]             except Exception:  # noqa: BLE001
+[Normal]                 logger.exception("chat 後台採集失敗 user=%s", user_id)
+[Normal]             finally:
+[Normal]                 s.close()
+[Normal]         threading.Thread(target=_bg, daemon=True).start()
+[Normal]         return {
+[Normal]             "完成": True,
+[Normal]             "模式": "後台執行",
+[Normal]             "範圍": company or "全部關注公司",
+[Normal]             "提示": "採集與匹配已在後台進行（約 1-3 分鐘）。請用 collect_status 查詢進度；"
+[Normal]                     "完成後可用 list_matches 查看該公司匹配結果。",
+[Normal]         }
+[Normal]     def collect_status(_: dict) -> dict:
+[Normal]         row = db.execute(
+[Normal]             text("SELECT collect_state FROM user_settings WHERE user_id=:u"),
+[Normal]             {"u": user_id},
+[Normal]         ).mappings().first()
+[Normal]         state = row["collect_state"] if row else None
+[Normal]         return dict(state or {}) or {"running": False, "提示": "尚無採集記錄"}
+[Normal]     def discover_company(args: dict) -> dict:
+[Normal]         """按公司名自動發現招聘官網（已知站點庫優先，其次 LLM 候選 + 實網探測）。"""
+[Normal]         import httpx as _httpx
+[Normal]         KNOWN_SITES = {
+[Normal]             "中金公司": "https://cicc.zhiye.com",
+[Normal]             "中信證券": "https://careers.citics.com",
+[Normal]             "國泰海通": "https://hr.gtht.com/recruitment/main/recruit2",
+[Normal]             "博時基金": "https://bosera.hotjob.cn",
+[Normal]             "招商局集團": "https://cmhk.zhiye.com",
+[Normal]             "招商證券": "https://wecruit.hotjob.cn/SU629dbc0c0dcad452299bc0f7/pb/index.html",
+[Normal]             "南方基金": "https://wecruit.hotjob.cn/SU6138665dbef57c3b63841399/pb/index.html",
+[Normal]             "華泰證券": "https://wecruit.hotjob.cn/SU6419745cbef57c635fe10142/pb/index.html",
+[Normal]             "华泰证券": "https://wecruit.hotjob.cn/SU6419745cbef57c635fe10142/pb/index.html",
+[Normal]             "廣發基金": "https://gffunds.jobs.feishu.cn",
+[Normal]             "广发基金": "https://gffunds.jobs.feishu.cn",
+[Normal]             "Cloudflare": "https://boards.greenhouse.io/cloudflare",
+[Normal]         }
+[Normal]         name = str(args.get("name") or "").strip()[:60]
+[Normal]         if not name:
+[Normal]             return {"完成": False, "原因": "請提供公司名"}
+[Normal]         hit = next((u for k, u in KNOWN_SITES.items() if k in name or name in k), None)
+[Normal]         if hit:
+[Normal]             return {"公司": name, "官網": hit, "來源": "已知站點庫",
+[Normal]                     "提示": "已找到招聘官網，可直接 add_company 添加後採集"}
+[Normal]         out = chat_json(
+[Normal]             "你熟悉各公司招聘官網。給出該公司招聘官網地址候選，"
+[Normal]             "並用公司拼音猜測北森招聘雲門戶後綴。輸出 JSON："
+[Normal]             '{"candidates": ["url"], "pinyin_hints": ["拼音"], "careers_hint": "一句話說明"}',
+[Normal]             f"公司名：{name}",
+[Normal]             max_tokens=500,
+[Normal]         )
+[Normal]         # 拼音後綴猜測：{pinyin}.zhiye.com / {pinyin}.hotjob.cn
+[Normal]         extra = []
+[Normal]         for py in (out.get("pinyin_hints") or [])[:3]:
+[Normal]             for dom in ("zhiye.com", "hotjob.cn"):
+[Normal]                 extra.append(f"https://{py}.{dom}")
+[Normal]         candidates = list(dict.fromkeys((out.get("candidates") or [])[:3] + extra))
+[Normal]         headers = {
+[Normal]             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+[Normal]                           "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+[Normal]             "Accept": "text/html,application/xhtml+xml",
+[Normal]             "Accept-Language": "zh-CN,zh;q=0.9",
+[Normal]         }
+[Normal]         verified = []
+[Normal]         for url in candidates:
+[Normal]             if not url.startswith("http"):
+[Normal]                 continue
+[Normal]             try:
+[Normal]                 resp = _httpx.get(url, timeout=8, follow_redirects=True, headers=headers)
+[Normal]                 title = ""
+[Normal]                 m = re.search(r"<title>([^<]*)</title>", resp.text, re.I)
+[Normal]                 if m:
+[Normal]                     title = m.group(1).strip()[:60]
+[Normal]                 verified.append({"url": str(resp.url), "status": resp.status_code, "title": title})
+[Normal]             except Exception as exc:  # noqa: BLE001
+[Normal]                 verified.append({"url": url, "status": "unreachable", "title": str(exc)[:60]})
+[Normal]         ok = [v for v in verified if v["status"] == 200 and v.get("title")]
+[Normal]         best = (ok or verified or [{"url": candidates[0] if candidates else ""}])[0]["url"]
+[Normal]         return {
+[Normal]             "公司": name, "說明": out.get("careers_hint"),
+[Normal]             "候選官網": verified,
+[Normal]             "最佳猜測": best,
+[Normal]             "建議": f"探測成功 {len(ok)}/{len(verified)} 個。可直接用 add_company 添加「{best}」"
+[Normal]                     "（系統採集器會自動識別 zhiye/hotjob 等招聘系統）。",
+[Normal]         }
+[Normal]     def add_company(args: dict) -> dict:
+[Normal]         name = str(args.get("name") or "").strip()[:100]
+[Normal]         url = str(args.get("careers_url") or "").strip()[:500]
+[Normal]         if not name:
+[Normal]             return {"完成": False, "原因": "請提供公司名"}
+[Normal]         if not url:
+[Normal]             disc = discover_company({"name": name})
+[Normal]             ok = [c for c in disc.get("候選官網") or [] if c.get("status") == 200]
+[Normal]             if ok:
+[Normal]                 url = ok[0]["url"]
+[Normal]             else:
+[Normal]                 return {"完成": False, "原因": f"未能自動發現「{name}」的招聘官網", "候選": disc}
+[Normal]         row = db.execute(
+[Normal]             text(
+[Normal]                 "INSERT INTO watched_companies (user_id, company_name, careers_url, platform) "
+[Normal]                 "VALUES (:u, :n, :url, 'official') "
+[Normal]                 "ON CONFLICT DO NOTHING RETURNING id"
+[Normal]             ),
+[Normal]             {"u": user_id, "n": name, "url": url},
+[Normal]         ).mappings().first()
+[Normal]         db.commit()
+[Normal]         return {"完成": True, "公司": name, "官網": url,
+[Normal]                 "下一步": "已添加到關注公司，可 run_collect(company=公司名) 開始採集"}
+[Normal]     def list_matches(args: dict) -> dict:
+[Normal]         limit = min(int(args.get("limit", 5)), 20)
+[Normal]         rows = db.execute(text(
+[Normal]             """
+[Normal]             SELECT p.company_name, p.title, p.location, m.match_score, m.status
+[Normal]             FROM job_matches m JOIN job_postings p ON p.id=m.posting_id
+[Normal]             WHERE m.user_id=:u AND m.match_score IS NOT NULL AND m.status IN ('new','pushed','applied')
+[Normal]             ORDER BY m.match_score DESC LIMIT :n
+[Normal]             """
+[Normal]         ), {"u": user_id, "n": limit}).mappings().all()
+[Normal]         return {"匹配": [dict(r) for r in rows]}
+[Normal]     def list_applications(args: dict) -> dict:
+[Normal]         limit = min(int(args.get("limit", 5)), 20)
+[Normal]         rows = db.execute(text(
+[Normal]             """
+[Normal]             SELECT p.company_name, p.title, a.status, a.status_reason, a.updated_at
+[Normal]             FROM applications a JOIN job_postings p ON p.id=a.posting_id
+[Normal]             WHERE a.user_id=:u ORDER BY a.updated_at DESC LIMIT :n
+[Normal]             """
+[Normal]         ), {"u": user_id, "n": limit}).mappings().all()
+[Normal]         return {"投遞": [dict(r) for r in rows]}
+[Normal]     def list_tasks(args: dict) -> dict:
+[Normal]         rows = db.execute(text(
+[Normal]             """
+[Normal]             SELECT t.task_type, t.question, t.created_at,
+[Normal]                    p.company_name, p.title
+[Normal]             FROM manual_tasks t
+[Normal]             JOIN applications a ON a.id=t.application_id
+[Normal]             JOIN job_postings p ON p.id=a.posting_id
+[Normal]             WHERE t.user_id=:u AND t.status='open' ORDER BY t.created_at DESC LIMIT 5
+[Normal]             """
+[Normal]         ), {"u": user_id}).mappings().all()
+[Normal]         return {"待處理": [dict(r) for r in rows]}
+[Normal]     def apply_rules(_: dict) -> dict:
+[Normal]         st = db.execute(text(
+[Normal]             "SELECT match_threshold, auto_apply_mode, preferred_locations, location_weight, "
+[Normal]             "apply_rate_limit_min, campus_preference FROM user_settings WHERE user_id=:u"
+[Normal]         ), {"u": user_id}).mappings().first()
+[Normal]         return {
+[Normal]             "投遞規則": [
+[Normal]                 "① 公司級一崗一投：同一公司已有進行中/成功的投遞時，自動跳過該公司其餘崗位",
+[Normal]                 f"② 校招/社招偏好：{st['campus_preference'] if st else 'both'}（campus=只投校招 / society=只投社招 / both=都投）",
+[Normal]                 "③ 校招職級適配：有工作經歷者投校招不攔截但降權 15 分（職級不適配）",
+[Normal]                 f"④ 貼合度閾值：{st['match_threshold'] if st else 70}%",
+[Normal]                 f"⑤ 投遞模式：{st['auto_apply_mode'] if st else 'threshold'}",
+[Normal]                 f"⑥ 期望地區加權：{st['preferred_locations'] or '未設置'}，命中 +{st['location_weight'] if st else 10} 分（計入優先級，不影響貼合度）",
+[Normal]                 f"⑦ 總部/分支偏好：{st['org_preference'] if st else 'both'}（計入優先級）",
+[Normal]                 f"⑧ 速率限制：{st['apply_rate_limit_min'] if st else 5} 分鐘/次",
+[Normal]                 "說明：貼合度=純個人條件匹配；優先級=貼合度+地區/校招職級/總部分支偏好加權，投遞隊列按優先級選崗位",
+[Normal]             ],
+[Normal]         }
+[Normal]     def list_info_fields(_: dict) -> dict:
+[Normal]         rows = db.execute(text(
+[Normal]             "SELECT key, value, source, updated_at FROM user_info_fields "
+[Normal]             "WHERE user_id=:u ORDER BY updated_at DESC LIMIT 50"
+[Normal]         ), {"u": user_id}).mappings().all()
+[Normal]         return {
+[Normal]             "個人信息庫": [
+[Normal]                 {"字段": r["key"], "值": r["value"][:60], "來源": r["source"]}
+[Normal]                 for r in rows
+[Normal]             ],
+[Normal]             "填寫規則": "表單必填項：精確匹配直接填；與已有信息相似度 ≥50% 自動填（記錄決策）；"
+[Normal]                         "全新問題才問用戶，回答自動入庫復用。",
+[Normal]         }
+[Normal]     def update_settings(args: dict) -> dict:
+[Normal]         fields = {}
+[Normal]         if "match_threshold" in args:
+[Normal]             fields["match_threshold"] = min(max(int(args["match_threshold"]), 50), 100)
+[Normal]         if "auto_apply_mode" in args and args["auto_apply_mode"] in ("off", "threshold", "all"):
+[Normal]             fields["auto_apply_mode"] = args["auto_apply_mode"]
+[Normal]         if "campus_preference" in args and args["campus_preference"] in ("campus", "society", "both"):
+[Normal]             fields["campus_preference"] = args["campus_preference"]
+[Normal]         if "org_preference" in args and args["org_preference"] in ("headquarter", "branch", "both"):
+[Normal]             fields["org_preference"] = args["org_preference"]
+[Normal]         if not fields:
+[Normal]             return {"完成": False, "原因": "沒有可更新的設置"}
+[Normal]         sets = ", ".join(f"{k}=:{k}" for k in fields)
+[Normal]         db.execute(text(
+[Normal]             "INSERT INTO user_settings (user_id) VALUES (:u) ON CONFLICT (user_id) DO NOTHING"
+[Normal]         ), {"u": user_id})
+[Normal]         db.execute(text(
+[Normal]             f"UPDATE user_settings SET {sets}, updated_at=now() WHERE user_id=:u"
+[Normal]         ), {"u": user_id, **fields})
+[Normal]         db.commit()
+[Normal]         return {"完成": True, "已更新": fields}
+[Normal]     def find_job(args: dict) -> dict:
+[Normal]         """精確搜索崗位庫（公司/標題關鍵詞），含最新評分。分詞匹配 + 繁簡轉換。"""
+[Normal]         q = str(args.get("keyword") or "").strip()
+[Normal]         company = str(args.get("company") or "").strip()
+[Normal]         if not q and not company:
+[Normal]             return {"error": "請提供 keyword 或 company"}
+[Normal]         # 繁→簡 + 分詞（按空白/特殊符號切）
+[Normal]         q = _t2s(q)
+[Normal]         tokens = [t for t in q.replace("，", " ").replace("/", " ").split() if t]
+[Normal]         conds, params = [], {"u": user_id, "co": company}
+[Normal]         for i, tok in enumerate(tokens[:6]):
+[Normal]             conds.append("p.title ILIKE '%'||:t" + str(i) + "||'%' "
+[Normal]                          "OR p.description_text ILIKE '%'||:t" + str(i) + "||'%'")
+[Normal]             params["t" + str(i)] = tok
+[Normal]         token_where = ("(" + " AND ".join(f"({c})" for c in conds) + ")") if conds else "true"
+[Normal]         rows = db.execute(text(
+[Normal]             f"""
+[Normal]             SELECT p.company_name, p.title, p.location, p.is_campus,
+[Normal]                    m.match_score, m.status, p.raw->>'tab' AS tab
+[Normal]             FROM job_postings p
+[Normal]             LEFT JOIN job_matches m ON m.posting_id = p.id AND m.user_id = :u
+[Normal]             WHERE p.is_active = true AND {token_where}
+[Normal]               AND (CAST(:co AS text) = '' OR p.company_name ILIKE '%'||:co||'%')
+[Normal]             ORDER BY m.match_score DESC NULLS LAST, p.first_seen_at DESC
+[Normal]             LIMIT 10
+[Normal]             """
+[Normal]         ), params).mappings().all()
+[Normal]         if not rows and len(tokens) > 1:
+[Normal]             or_where = "(" + " OR ".join(conds) + ")"
+[Normal]             rows = db.execute(text(
+[Normal]                 f"""
+[Normal]                 SELECT p.company_name, p.title, p.location, p.is_campus,
+[Normal]                        m.match_score, m.status, p.raw->>'tab' AS tab
+[Normal]                 FROM job_postings p
+[Normal]                 LEFT JOIN job_matches m ON m.posting_id = p.id AND m.user_id = :u
+[Normal]                 WHERE p.is_active = true AND {or_where}
+[Normal]                   AND (CAST(:co AS text) = '' OR p.company_name ILIKE '%'||:co||'%')
+[Normal]                 ORDER BY m.match_score DESC NULLS LAST, p.first_seen_at DESC
+[Normal]                 LIMIT 10
+[Normal]                 """
+[Normal]             ), params).mappings().all()
+[Normal]         if not rows:
+[Normal]             return {"找到": 0, "提示": "崗位庫中沒有匹配的崗位；可先調用 run_collect 採集最新崗位後再查"}
+[Normal]         return {"找到": len(rows), "崗位": [
+[Normal]             {"公司": r["company_name"], "職位": r["title"], "地點": r["location"],
+[Normal]              "校招": r["is_campus"], "貼合度": r["match_score"], "狀態": r["status"],
+[Normal]              "來源": (r["tab"] or "")}
+[Normal]             for r in rows
+[Normal]         ]}
+[Normal]     def score_job(args: dict) -> dict:
+[Normal]         """對指定崗位即時評分（忽略緩存，用當前畫像現場重算）。"""
+[Normal]         q = str(args.get("keyword") or "").strip()
+[Normal]         company = str(args.get("company") or "").strip()
+[Normal]         q = _t2s(q)
+[Normal]         tokens = [t for t in q.replace("，", " ").replace("/", " ").split() if t]
+[Normal]         conds, params = [], {"co": company}
+[Normal]         for i, tok in enumerate(tokens[:6]):
+[Normal]             conds.append("p.title ILIKE '%'||:t" + str(i) + "||'%'")
+[Normal]             params["t" + str(i)] = tok
+[Normal]         token_where = ("(" + " AND ".join(f"({c})" for c in conds) + ")") if conds else "true"
+[Normal]         row = db.execute(text(
+[Normal]             f"""
+[Normal]             SELECT p.id, p.company_name, p.title FROM job_postings p
+[Normal]             WHERE p.is_active = true AND {token_where}
+[Normal]               AND (CAST(:co AS text) = '' OR p.company_name ILIKE '%'||:co||'%')
+[Normal]             ORDER BY p.first_seen_at DESC LIMIT 1
+[Normal]             """
+[Normal]         ), params).mappings().first()
+[Normal]         if not row:
+[Normal]             return {"error": "未找到該崗位，可先 run_collect 採集"}
+[Normal]         # 快讀模式：返回已存分數與構成（不現場重評，避免超時）
+[Normal]         m = db.execute(text(
+[Normal]             """
+[Normal]             SELECT m.match_score, m.priority_score, m.score_breakdown, m.direction_scores,
+[Normal]                    m.hard_failures, m.reasons, m.updated_at
+[Normal]             FROM job_matches m
+[Normal]             WHERE m.user_id=:u AND m.posting_id=:p
+[Normal]             """
+[Normal]         ), {"u": user_id, "p": str(row["id"])}).mappings().first()
+[Normal]         if not m:
+[Normal]             return {"error": "該崗位尚未匹配，請先重新匹配"}
+[Normal]         return {
+[Normal]             "崗位": f"{row['company_name']} · {row['title']}",
+[Normal]             "當前貼合度": m["match_score"],
+[Normal]             "優先級": m["priority_score"],
+[Normal]             "構成": m["score_breakdown"] or {},
+[Normal]             "方向分數": m["direction_scores"] or [],
+[Normal]             "硬性條件": m["hard_failures"] or [],
+[Normal]             "評分時間": m["updated_at"].isoformat() if m["updated_at"] else None,
+[Normal]             "分數變化解釋": "系統規則曾演進：舊版貼合度混合了地區加權等偏好項；"
+[Normal]                             "現版貼合度=純個人條件匹配（地區/校招職級/總部分支偏好單獨計入「優先級」），"
+[Normal]                             "多方向崗位取最高方向分。因此新舊分數不可直接比較，變化不代表你的簡歷變差。"
+[Normal]                             "如需現場重算，請到「匹配與崗位」點重新匹配。",
+[Normal]         }
+[Normal]     def update_basic_info(args: dict) -> dict:
+[Normal]         """更新基本信息（姓名/電話），寫 profiles。"""
+[Normal]         sets, params = [], {"u": user_id}
+[Normal]         if "full_name" in args and args["full_name"]:
+[Normal]             sets.append("full_name = :n")
+[Normal]             params["n"] = str(args["full_name"]).strip()[:64]
+[Normal]         if "phone" in args and args["phone"]:
+[Normal]             sets.append("phone = :p")
+[Normal]             params["p"] = str(args["phone"]).strip()[:32]
+[Normal]         if not sets:
+[Normal]             return {"完成": False, "原因": "沒有可更新字段"}
+[Normal]         db.execute(text(f"UPDATE profiles SET {', '.join(sets)}, updated_at=now() WHERE id=:u"), params)
+[Normal]         db.commit()
+[Normal]         return {"完成": True, "已更新": list(params.keys())}
+[Normal]     def update_hard_facts(args: dict) -> dict:
+[Normal]         """更新硬性事實（簽證/期望城市/薪資/到崗時間/年限），畫像與元信息表雙寫。"""
+[Normal]         keys = {
+[Normal]             "visa_status": "簽證狀態", "preferred_locations": "期望城市",
+[Normal]             "salary_expectation": "期望薪資", "availability": "可到崗時間",
+[Normal]             "total_years": "工作年限",
+[Normal]         }
+[Normal]         updated = {}
+[Normal]         for k in keys:
+[Normal]             if k in args and args[k] not in (None, ""):
+[Normal]                 updated[k] = str(args[k]).strip()
+[Normal]         if not updated:
+[Normal]             return {"完成": False, "原因": f"請提供要更新的字段：{list(keys.values())}"}
+[Normal]         # 畫像 hard_facts：Python 合併後 CAST 寫回
+[Normal]         row = db.execute(text(
+[Normal]             "SELECT hard_facts FROM candidate_profiles WHERE user_id=:u AND is_current=true"
+[Normal]         ), {"u": user_id}).mappings().first()
+[Normal]         if row is not None:
+[Normal]             hf = dict(row["hard_facts"] or {})
+[Normal]             hf.update(updated)
+[Normal]             db.execute(text(
+[Normal]                 "UPDATE candidate_profiles SET hard_facts=CAST(:hf AS jsonb) "
+[Normal]                 "WHERE user_id=:u AND is_current=true"
+[Normal]             ), {"hf": j(hf), "u": user_id})
+[Normal]         # 元信息表同步
+[Normal]         for k, v in updated.items():
+[Normal]             db.execute(text(
+[Normal]                 "INSERT INTO user_info_fields (user_id, key, value, source) VALUES (:u,:k,:v,'chat') "
+[Normal]                 "ON CONFLICT (user_id, key) DO UPDATE SET value=EXCLUDED.value, source='chat', updated_at=now()"
+[Normal]             ), {"u": user_id, "k": k, "v": v})
+[Normal]         db.commit()
+[Normal]         return {"完成": True, "已更新": updated}
+[Normal]     def upsert_info_field(args: dict) -> dict:
+[Normal]         key = str(args.get("key") or "").strip()
+[Normal]         value = str(args.get("value") or "").strip()
+[Normal]         if not key or not value:
+[Normal]             return {"完成": False, "原因": "需要 key 和 value"}
+[Normal]         db.execute(text(
+[Normal]             "INSERT INTO user_info_fields (user_id, key, value, source) VALUES (:u,:k,:v,'chat') "
+[Normal]             "ON CONFLICT (user_id, key) DO UPDATE SET value=EXCLUDED.value, source='chat', updated_at=now()"
+[Normal]         ), {"u": user_id, "k": key[:100], "v": value[:2000]})
+[Normal]         db.commit()
+[Normal]         return {"完成": True}
+[Normal]     def apply_job(args: dict) -> dict:
+[Normal]         """直接投遞指定崗位：建 application + 觸發投遞適配器，返回結果或人工任務指引。"""
+[Normal]         from app.services.apply_engine import run_application
+[Normal]         q = _t2s(str(args.get("keyword") or "").strip())
+[Normal]         company = str(args.get("company") or "").strip()
+[Normal]         tokens = [t for t in q.replace("，", " ").replace("/", " ").split() if t]
+[Normal]         conds, params = [], {"u": user_id, "co": company}
+[Normal]         for i, tok in enumerate(tokens[:6]):
+[Normal]             conds.append("p.title ILIKE '%'||:t" + str(i) + "||'%'")
+[Normal]             params["t" + str(i)] = tok
+[Normal]         token_where = ("(" + " AND ".join(f"({c})" for c in conds) + ")") if conds else "true"
+[Normal]         posting = db.execute(text(
+[Normal]             f"""
+[Normal]             SELECT p.id, p.company_name, p.title, p.apply_url,
+[Normal]                    m.id AS match_id, m.match_score
+[Normal]             FROM job_postings p
+[Normal]             LEFT JOIN job_matches m ON m.posting_id = p.id AND m.user_id = :u
+[Normal]             WHERE p.is_active = true AND {token_where}
+[Normal]               AND (CAST(:co AS text) = '' OR p.company_name ILIKE '%'||:co||'%')
+[Normal]             ORDER BY m.priority_score DESC NULLS LAST, p.first_seen_at DESC LIMIT 1
+[Normal]             """
+[Normal]         ), params).mappings().first()
+[Normal]         if not posting:
+[Normal]             return {"error": "未找到該崗位，請先確認崗位名稱或先採集"}
+[Normal]         if posting["match_score"] is None:
+[Normal]             return {"error": f"該崗位貼合度未通過硬性條件，無法投遞（{posting['company_name']} · {posting['title']}）"}
+[Normal]         # 建/取 application
+[Normal]         app = db.execute(text(
+[Normal]             """
+[Normal]             INSERT INTO applications (user_id, posting_id, match_id, status)
+[Normal]             VALUES (:u, :p, :m, 'queued')
+[Normal]             ON CONFLICT (user_id, posting_id) DO UPDATE SET status='queued', status_reason=NULL,
+[Normal]               next_retry_at=NULL, updated_at=now()
+[Normal]             RETURNING id
+[Normal]             """
+[Normal]         ), {"u": user_id, "p": posting["id"], "m": posting["match_id"]}).mappings().one()
+[Normal]         db.commit()
+[Normal]         try:
+[Normal]             result = run_application(db, str(app["id"]), force=True)
+[Normal]         except Exception as exc:  # noqa: BLE001
+[Normal]             result = {"status": "error", "error": str(exc)[:300]}
+[Normal]         if result.get("status") == "submitted":
+[Normal]             return {"完成": True, "投遞": "已提交", "崗位": f"{posting['company_name']} · {posting['title']}"}
+[Normal]         if result.get("status") == "needs_input":
+[Normal]             task = db.execute(text(
+[Normal]                 "SELECT id, task_type, question, options FROM manual_tasks "
+[Normal]                 "WHERE application_id=:aid AND status='open' ORDER BY created_at DESC LIMIT 1"
+[Normal]             ), {"aid": str(app["id"])}).mappings().first()
+[Normal]             return {"完成": False, "需要人工": True, "任務類型": task["task_type"],
+[Normal]                     "指引": task["question"] if task else "", "任務ID": str(task["id"]) if task else None,
+[Normal]                     "操作": "請到「我的資料 → 待處理」按指引完成（驗證碼/官網確認）"}
+[Normal]         return {"完成": False, "狀態": result.get("status"), "詳情": str(result)[:300]}
+[Normal]     tools = [
+[Normal]         {"type": "function", "function": {
+[Normal]             "name": "get_status",
+[Normal]             "description": "查詢用戶當前整體狀態（畫像/簡歷/匹配/投遞/待處理/設置）",
+[Normal]             "parameters": {"type": "object", "properties": {}},
+[Normal]         }},
+[Normal]         {"type": "function", "function": {
+[Normal]             "name": "guide",
+[Normal]             "description": "檢查首次使用還缺哪些步驟",
+[Normal]             "parameters": {"type": "object", "properties": {}},
+[Normal]         }},
+[Normal]         {"type": "function", "function": {
+[Normal]             "name": "run_collect",
+[Normal]             "description": "後台異步採集指定公司或全部關注公司的崗位並匹配（啟動後用 collect_status 查進度）",
+[Normal]             "parameters": {"type": "object", "properties": {
+[Normal]                 "company": {"type": "string", "description": "公司名（可選；不在關注列表會返回引導）"},
+[Normal]             }},
+[Normal]         }},
+[Normal]         {"type": "function", "function": {
+[Normal]             "name": "collect_status",
+[Normal]             "description": "查詢後台採集/匹配的進度與結果（僅在用戶再次詢問進度時調用，不要在剛啟動後立即調用）",
+[Normal]             "parameters": {"type": "object", "properties": {}},
+[Normal]         }},
+[Normal]         {"type": "function", "function": {
+[Normal]             "name": "discover_company",
+[Normal]             "description": "按公司名自動發現招聘官網地址（用戶要找的公司不在系統中時調用）",
+[Normal]             "parameters": {"type": "object", "properties": {
+[Normal]                 "name": {"type": "string", "description": "公司名"},
+[Normal]             }},
+[Normal]         }},
+[Normal]         {"type": "function", "function": {
+[Normal]             "name": "add_company",
+[Normal]             "description": "把公司添加到關注公司（careers_url 可留空，會自動發現官網）",
+[Normal]             "parameters": {"type": "object", "properties": {
+[Normal]                 "name": {"type": "string"},
+[Normal]                 "careers_url": {"type": "string"},
+[Normal]             }},
+[Normal]         }},
+[Normal]         {"type": "function", "function": {
+[Normal]             "name": "list_matches",
+[Normal]             "description": "列出用戶的最新匹配崗位（按貼合度排序）",
+[Normal]             "parameters": {"type": "object", "properties": {"limit": {"type": "integer"}}},
+[Normal]         }},
+[Normal]         {"type": "function", "function": {
+[Normal]             "name": "list_applications",
+[Normal]             "description": "列出用戶最近的投遞記錄與狀態",
+[Normal]             "parameters": {"type": "object", "properties": {"limit": {"type": "integer"}}},
+[Normal]         }},
+[Normal]         {"type": "function", "function": {
+[Normal]             "name": "list_tasks",
+[Normal]             "description": "列出等待用戶處理的人工任務（驗證碼/缺字段等）",
+[Normal]             "parameters": {"type": "object", "properties": {}},
+[Normal]         }},
+[Normal]         {"type": "function", "function": {
+[Normal]             "name": "update_settings",
+[Normal]             "description": "修改用戶設置：match_threshold(50-100) 或 auto_apply_mode(off/threshold/all)",
+[Normal]             "parameters": {"type": "object", "properties": {
+[Normal]                 "match_threshold": {"type": "integer"},
+[Normal]                 "auto_apply_mode": {"type": "string", "enum": ["off", "threshold", "all"]},
+[Normal]                 "org_preference": {"type": "string", "enum": ["headquarter", "branch", "both"],
+[Normal]                                    "description": "總部/分支偏好：headquarter=總部優先，branch=分支優先，both=一視同仁"},
+[Normal]             }},
+[Normal]         }},
+[Normal]         {"type": "function", "function": {
+[Normal]             "name": "apply_rules",
+[Normal]             "description": "查詢當前生效的投遞規則（一崗一投/校招社招偏好/閾值/地區加權/速率限制），用戶詢問規則或限制時調用",
+[Normal]             "parameters": {"type": "object", "properties": {}},
+[Normal]         }},
+[Normal]         {"type": "function", "function": {
+[Normal]             "name": "list_info_fields",
+[Normal]             "description": "查詢用戶的個人信息庫（元信息表）與自動填寫規則，用戶詢問信息互補/自動填充時調用",
+[Normal]             "parameters": {"type": "object", "properties": {}},
+[Normal]         }},
+[Normal]         {"type": "function", "function": {
+[Normal]             "name": "find_job",
+[Normal]             "description": "按關鍵詞/公司精確搜索崗位庫（例如「AI產品經理」），返回崗位與最新貼合度",
+[Normal]             "parameters": {"type": "object", "properties": {
+[Normal]                 "keyword": {"type": "string", "description": "職位關鍵詞"},
+[Normal]                 "company": {"type": "string", "description": "公司名（可選）"},
+[Normal]             }},
+[Normal]         }},
+[Normal]         {"type": "function", "function": {
+[Normal]             "name": "score_job",
+[Normal]             "description": "查詢指定崗位的貼合度與構成（快讀數據庫，不現場重算；用戶問分數為什麼變化時也用它，含規則演進說明）",
+[Normal]             "parameters": {"type": "object", "properties": {
+[Normal]                 "keyword": {"type": "string", "description": "職位關鍵詞"},
+[Normal]                 "company": {"type": "string", "description": "公司名（可選）"},
+[Normal]             }},
+[Normal]         }},
+[Normal]         {"type": "function", "function": {
+[Normal]             "name": "update_basic_info",
+[Normal]             "description": "直接更新用戶基本信息（full_name 姓名/暱稱、phone 手機號），無需用戶去別處操作",
+[Normal]             "parameters": {"type": "object", "properties": {
+[Normal]                 "full_name": {"type": "string"},
+[Normal]                 "phone": {"type": "string"},
+[Normal]             }},
+[Normal]         }},
+[Normal]         {"type": "function", "function": {
+[Normal]             "name": "update_hard_facts",
+[Normal]             "description": "直接更新硬性事實（visa_status簽證/salary_expectation期望薪資/availability到崗時間/total_years工作年限/preferred_locations期望城市），同步畫像與元信息表",
+[Normal]             "parameters": {"type": "object", "properties": {
+[Normal]                 "visa_status": {"type": "string"},
+[Normal]                 "salary_expectation": {"type": "string"},
+[Normal]                 "availability": {"type": "string"},
+[Normal]                 "total_years": {"type": "string"},
+[Normal]                 "preferred_locations": {"type": "string", "description": "逗號分隔的城市"},
+[Normal]             }},
+[Normal]         }},
+[Normal]         {"type": "function", "function": {
+[Normal]             "name": "upsert_info_field",
+[Normal]             "description": "寫入/更新元信息表的一條字段問答（key + value），供投遞表單自動互補",
+[Normal]             "parameters": {"type": "object", "properties": {
+[Normal]                 "key": {"type": "string"},
+[Normal]                 "value": {"type": "string"},
+[Normal]             }},
+[Normal]         }},
+[Normal]         {"type": "function", "function": {
+[Normal]             "name": "apply_job",
+[Normal]             "description": "直接投遞指定崗位（用戶說「幫我投遞XX」時必須調用）：建投遞單並觸發投遞，返回成功或人工任務指引",
+[Normal]             "parameters": {"type": "object", "properties": {
+[Normal]                 "keyword": {"type": "string", "description": "職位關鍵詞"},
+[Normal]                 "company": {"type": "string", "description": "公司名（可選）"},
+[Normal]             }},
+[Normal]         }},
+[Normal]     ]
+[Normal]     executor = {
+[Normal]         "get_status": get_status,
+[Normal]         "guide": guide,
+[Normal]         "run_collect": run_collect,
+[Normal]         "collect_status": collect_status,
+[Normal]         "discover_company": discover_company,
+[Normal]         "add_company": add_company,
+[Normal]         "list_matches": list_matches,
+[Normal]         "list_applications": list_applications,
+[Normal]         "list_tasks": list_tasks,
+[Normal]         "update_settings": update_settings,
+[Normal]         "apply_rules": apply_rules,
+[Normal]         "list_info_fields": list_info_fields,
+[Normal]         "find_job": find_job,
+[Normal]         "score_job": score_job,
+[Normal]         "update_basic_info": update_basic_info,
+[Normal]         "update_hard_facts": update_hard_facts,
+[Normal]         "upsert_info_field": upsert_info_field,
+[Normal]         "apply_job": apply_job,
+[Normal]     }
+[Normal]     return tools, lambda name, args: executor[name](args or {})
+[Normal] @router.post("")
+[Normal] def chat(user: CurrentUser, db: DB, payload: ChatRequest) -> dict:
+[Normal]     messages = [{"role": m.role, "content": m.content} for m in payload.messages[-10:]]
+[Normal]     tools, executor = _build_tools(user["id"], db)
+[Normal]     reply = chat_with_tools(SYSTEM_PROMPT, messages, tools, executor)
+[Normal]     # 問答歷史持久化（存儲不增加 API 成本；恢復會話才會把歷史放回上下文）
+[Normal]     # 存儲前脫敏（隱私方案：歷史裡不落敏感明文）
+[Normal]     from app.core.llm import mask_pii
+[Normal]     full = [
+[Normal]         {**m, "content": mask_pii(m.get("content") or "")}
+[Normal]         for m in messages + [{"role": "assistant", "content": reply}]
+[Normal]     ]
+[Normal]     conv_id = payload.conversation_id
+[Normal]     if conv_id:
+[Normal]         exists = db.execute(
+[Normal]             text("SELECT id FROM chat_conversations WHERE id=:id AND user_id=:u"),
+[Normal]             {"id": conv_id, "u": user["id"]},
+[Normal]         ).first()
+[Normal]         if exists:
+[Normal]             title = next((m["content"][:40] for m in messages if m["role"] == "user"), "新對話")
+[Normal]             db.execute(
+[Normal]                 text(
+[Normal]                     "UPDATE chat_conversations SET messages=CAST(:msgs AS jsonb), "
+[Normal]                     "title=:t, updated_at=now() WHERE id=:id"
+[Normal]                 ),
+[Normal]                 {"msgs": j(full), "t": title, "id": conv_id},
+[Normal]             )
+[Normal]             db.commit()
+[Normal]         else:
+[Normal]             conv_id = None
+[Normal]     if not conv_id:
+[Normal]         title = next((m["content"][:40] for m in messages if m["role"] == "user"), "新對話")
+[Normal]         row = db.execute(
+[Normal]             text(
+[Normal]                 "INSERT INTO chat_conversations (user_id, title, messages) "
+[Normal]                 "VALUES (:u, :t, CAST(:msgs AS jsonb)) RETURNING id"
+[Normal]             ),
+[Normal]             {"u": user["id"], "t": title, "msgs": j(full)},
+[Normal]         ).mappings().one()
+[Normal]         conv_id = str(row["id"])
+[Normal]         db.commit()
+[Normal]     return {"reply": reply, "conversation_id": conv_id}
+[Normal] @router.get("/conversations")
+[Normal] def list_conversations(user: CurrentUser, db: DB) -> list[dict]:
+[Normal]     rows = db.execute(
+[Normal]         text(
+[Normal]             "SELECT id, title, created_at, updated_at, "
+[Normal]             "jsonb_array_length(messages) AS n "
+[Normal]             "FROM chat_conversations WHERE user_id=:u ORDER BY updated_at DESC LIMIT 100"
+[Normal]         ),
+[Normal]         {"u": user["id"]},
+[Normal]     ).mappings().all()
+[Normal]     return [
+[Normal]         {"id": str(r["id"]), "title": r["title"], "created_at": r["created_at"].isoformat(),
+[Normal]          "updated_at": r["updated_at"].isoformat(), "messages_count": r["n"]}
+[Normal]         for r in rows
+[Normal]     ]
+[Normal] @router.get("/conversations/{conv_id}")
+[Normal] def get_conversation(user: CurrentUser, db: DB, conv_id: str) -> dict:
+[Normal]     row = db.execute(
+[Normal]         text("SELECT id, title, messages FROM chat_conversations WHERE id=:id AND user_id=:u"),
+[Normal]         {"id": conv_id, "u": user["id"]},
+[Normal]     ).mappings().first()
+[Normal]     if not row:
+[Normal]         from fastapi import HTTPException
+[Normal]         raise HTTPException(404, "對話不存在")
+[Normal]     return {"id": str(row["id"]), "title": row["title"], "messages": row["messages"] or []}
+[Normal] @router.delete("/conversations/{conv_id}", status_code=204)
+[Normal] def delete_conversation(user: CurrentUser, db: DB, conv_id: str) -> None:
+[Normal]     db.execute(
+[Normal]         text("DELETE FROM chat_conversations WHERE id=:id AND user_id=:u"),
+[Normal]         {"id": conv_id, "u": user["id"]},
+[Normal]     )
+[Normal]     db.commit()
+[Normal] """關注公司管理 + 公司招聘官網自動發現。"""
+[Normal] from __future__ import annotations
+[Normal] from typing import Annotated
+[Normal] from fastapi import APIRouter, Depends, HTTPException, Request
+[Normal] from pydantic import BaseModel
+[Normal] from sqlalchemy import text
+[Normal] from sqlalchemy.orm import Session
+[Normal] from app.core.audit import log_audit
+[Normal] from app.core.auth import get_current_user
+[Normal] from app.core.jsonutil import j
+[Normal] from app.db import get_db
+[Normal] from app.schemas.accounts import PLATFORMS, WatchedCompanyCreate, WatchedCompanyUpdate
+[Normal] router = APIRouter(prefix="/companies", tags=["companies"])
+[Normal] CurrentUser = Annotated[dict, Depends(get_current_user)]
+[Normal] DB = Annotated[Session, Depends(get_db)]
+[Normal] @router.get("")
+[Normal] def list_companies(user: CurrentUser, db: DB) -> list[dict]:
+[Normal]     rows = db.execute(
+[Normal]         text(
+[Normal]             """
+[Normal]                   ))}
+[Normal]                 </tbody>
+[Normal]               </table>
+[Normal]             </>
+[Normal]           )}
+[Normal]           <p className="notice">{msg}</p>
+[Normal]         </div>
+[Normal]       </main>
+[Normal]     </div>
+[Normal]   );
+[Normal] }
+[Normal] import { useEffect, useState } from "react";
+[Normal] import { api } from "../lib/api";
+[Normal] import { useT } from "../lib/i18n";
+[Normal] import { decryptText, deriveKeyB64, encryptText, getKeyB64, setKeyB64 } from "../lib/crypto";
+[Normal] type InfoField = { key: string; value: string; source: string; updated_at: string; sensitive?: boolean; encrypted?: string | null };
+[Normal] type Full = {
+[Normal]   basic: { full_name: string | null; email: string | null; phone: string | null };
+[Normal]   profile: {
+[Normal]     hard_facts: Record<string, unknown>;
+[Normal]     education: Record<string, unknown>[];
+[Normal]     experiences: Record<string, unknown>[];
+[Normal]     skills: { name: string; level: number; years: number | null }[];
+[Normal]     summary: string | null;
+[Normal]     generated_at: string | null;
+[Normal]   };
+[Normal]   info_fields: InfoField[];
+[Normal] };
+[Normal] const KEY_LABELS: Record<string, string> = {
+[Normal]   candidate_name: "姓名（簡歷提取）",
+[Normal]   full_name: "姓名/暱稱",
+[Normal]   email: "郵箱",
+[Normal]   phone: "手機號",
+[Normal]   visa_status: "簽證狀態",
+[Normal]   preferred_locations: "期望城市",
+[Normal]   salary_expectation: "期望薪資",
+[Normal]   availability: "可到崗時間",
+[Normal]   total_years: "工作年限",
+[Normal] };
+[Normal] const SOURCE_TEXT: Record<string, string> = {
+[Normal]   user: "手動填寫",
+[Normal]   resume: "簡歷解析",
+[Normal]   manual_answer: "投遞回填",
+[Normal]   chat: "AI 助手填寫",
+[Normal] };
+[Normal] const CORE_KEYS = ["candidate_name", "full_name", "phone", "visa_status", "preferred_locations",
+[Normal]   "salary_expectation", "availability", "total_years"];
+[Normal] /** 個人信息總覽：基本信息 + 元信息庫（含畫像提取，統一存儲），一站式檢查/編輯 */
+[Normal] export default function ProfileInfo() {
+[Normal]   const { t } = useT();
+[Normal]   const [data, setData] = useState<Full | null>(null);
+[Normal]   const [basic, setBasic] = useState({ full_name: "", email: "", phone: "" });
+[Normal]   const [newKey, setNewKey] = useState("");
+[Normal]   const [newVal, setNewVal] = useState("");
+[Normal]   const [msg, setMsg] = useState("");
+[Normal]   const [revealed, setRevealed] = useState<Set<string>>(new Set());
+[Normal]   function mask(v: string) {
+[Normal]     if (v.length <= 4) return "****";
+[Normal]     return v.slice(0, 2) + "*".repeat(Math.min(v.length - 4, 8)) + v.slice(-2);
+[Normal]   }
+[Normal]   async function load() {
+[Normal]     try {
+[Normal]       const d = await api<Full>("/api/me/profile-full");
+[Normal]       // 敏感字段本地解密（密鑰存在時）
+[Normal]       const key = getKeyB64();
+[Normal]       if (key) {
+[Normal]         for (const f of d.info_fields) {
+[Normal]           if (f.encrypted) {
+[Normal]             const pt = await decryptText(key, f.encrypted);
+[Normal]             if (pt != null) f.value = pt;
+[Normal]           }
+[Normal]         }
+[Normal]       }
+[Normal]       setData(d);
+[Normal]       setBasic({
+[Normal]         full_name: d.basic.full_name ?? "",
+[Normal]         email: d.basic.email ?? "",
+[Normal]         phone: d.basic.phone ?? "",
+[Normal]       });
+[Normal]       setMsg("");
+[Normal]     } catch (e) {
+[Normal]       setMsg((e as Error).message);
+[Normal]     }
+[Normal]   }
+[Normal]   useEffect(() => {
+[Normal]     void load();
+[Normal]   }, []);
+[Normal]   async function saveBasic() {
+[Normal]     try {
+[Normal]       await api("/api/me", {
+[Normal]         method: "PATCH",
+[Normal]         body: JSON.stringify({ full_name: basic.full_name || null, phone: basic.phone || null }),
+[Normal]       });
+[Normal]       setMsg("基本信息已保存");
+[Normal]     } catch (e) {
+[Normal]       setMsg(`保存失敗: ${(e as Error).message}`);
+[Normal]     }
+[Normal]   }
+[Normal]   async function addField() {
+[Normal]     const k = newKey.trim();
+[Normal]     const v = newVal.trim();
+[Normal]     if (!k || !v) return;
+[Normal]     try {
+[Normal]       await api("/api/me/info-fields", { method: "PUT", body: JSON.stringify({ key: k, value: v }) });
+[Normal]       setNewKey("");
+[Normal]       setNewVal("");
+[Normal]       await load();
+[Normal]     } catch (e) {
+[Normal]       setMsg(`保存失敗: ${(e as Error).message}`);
+[Normal]     }
+[Normal]   }
+[Normal]   async function rotatePassword() {
+[Normal]     const oldPw = prompt("請輸入當前密碼（驗證用）");
+[Normal]     if (!oldPw) return;
+[Normal]     const newPw = prompt("請輸入新密碼（至少 6 位）");
+[Normal]     if (!newPw || newPw.length < 6) return setMsg("新密碼太短");
+[Normal]     setMsg("正在遷移敏感字段密文…");
+[Normal]     try {
+[Normal]       const oldKey = getKeyB64();
+[Normal]       const newKey = oldKey ? await deriveKeyB64(newPw, `jobfly:${data?.basic.email}`) : null;
+[Normal]       // 1) 後端改密碼（驗證舊密碼）
+[Normal]       await api("/api/auth/change-password", {
+[Normal]         method: "POST",
+[Normal]         body: JSON.stringify({ old_password: oldPw, new_password: newPw }),
+[Normal]       });
+[Normal]       // 2) 敏感字段密文遷移：舊密鑰解密 → 新密鑰加密 → 批量重傳
+[Normal]       if (oldKey && newKey && data) {
+[Normal]         const fields = [];
+[Normal]         for (const f of data.info_fields) {
+[Normal]           if (f.encrypted) {
+[Normal]             const pt = await decryptText(oldKey, f.encrypted);
+[Normal]             if (pt != null) {
+[Normal]               fields.push({ key: f.key, sensitive_enc: await encryptText(newKey, pt) });
+[Normal]             }
+[Normal]           }
+[Normal]         }
+[Normal]         if (fields.length) {
+[Normal]           await api("/api/me/info-fields/import", {
+[Normal]             method: "PUT",
+[Normal]             body: JSON.stringify({ fields }),
+[Normal]           });
+[Normal]         }
+[Normal]         setKeyB64(newKey);
+[Normal]       }
+[Normal]       setMsg("✅ 密碼已更新，敏感字段密文已用新密鑰重新加密");
+[Normal]     } catch (e) {
+[Normal]       setMsg(`修改失敗: ${(e as Error).message}`);
+[Normal]     }
+[Normal]   }
+[Normal]   async function exportBackup() {
+[Normal]     try {
+[Normal]       const r = await api<{ fields: { key: string; sensitive_enc: string }[]; note: string }>(
+[Normal]         "/api/me/info-fields/export",
+[Normal]       );
+[Normal]       const blob = new Blob([JSON.stringify(r, null, 2)], { type: "application/json" });
+[Normal]       const a = document.createElement("a");
+[Normal]       a.href = URL.createObjectURL(blob);
+[Normal]       a.download = "jobfly-e2ee-backup.json";
+[Normal]       a.click();
+[Normal]       setMsg("已導出密文備份文件（只含密文，恢復需同一密碼）");
+[Normal]     } catch (e) {
+[Normal]       setMsg(`導出失敗: ${(e as Error).message}`);
+[Normal]     }
+[Normal]   }
+[Normal]   async function importBackup() {
+[Normal]     const input = document.createElement("input");
+[Normal]     input.type = "file";
+[Normal]     input.accept = ".json";
+[Normal]     input.onchange = async () => {
+[Normal]       const file = input.files?.[0];
+[Normal]       if (!file) return;
+[Normal]       try {
+[Normal]         const parsed = JSON.parse(await file.text());
+[Normal]         const r = await api<{ imported: number }>("/api/me/info-fields/import", {
+[Normal]           method: "PUT",
+[Normal]           body: JSON.stringify({ fields: parsed.fields || [] }),
+[Normal]         });
+[Normal]         setMsg(`✅ 已導入 ${r.imported} 條敏感字段密文`);
+[Normal]         await load();
+[Normal]       } catch (e) {
+[Normal]         setMsg(`導入失敗: ${(e as Error).message}`);
+[Normal]       }
+[Normal]     };
+[Normal]     input.click();
+[Normal]   }
+[Normal]   async function delField(key: string) {
+[Normal]     await api(`/api/me/info-fields/${encodeURIComponent(key)}`, { method: "DELETE" });
+[Normal]     await load();
+[Normal]   }
+[Normal]   return (
+[Normal]     <div>
+[Normal]       <main>
+[Normal]         <div className="card wide">
+[Normal]           <h2>個人信息總覽</h2>
+[Normal]           <p className="muted">
+[Normal]             這裡是你投遞簡歷所需的全部信息（統一存儲）：AI 從簡歷提取的內容、你手動維護的內容、
+[Normal]             投遞回填的答案都匯總在下方信息庫，投遞時表單缺項自動從這裡互補，請定期檢查。
+[Normal]           </p>
+[Normal]           <h3>基本信息</h3>
+[Normal]           <div className="row wrap">
+[Normal]             <input placeholder="姓名/暱稱" value={basic.full_name}
+[Normal]                    onChange={(e) => setBasic({ ...basic, full_name: e.target.value })} />
+[Normal]             <input placeholder="手機號" value={basic.phone}
+[Normal]                    onChange={(e) => setBasic({ ...basic, phone: e.target.value })} />
+[Normal]             <input placeholder="郵箱" value={basic.email} disabled />
+[Normal]             <button onClick={() => void saveBasic()}>{t("save")}</button>
+[Normal]           </div>
+[Normal]           <h3>🔐 安全（E2EE）</h3>
+[Normal]           <div className="row wrap">
+[Normal]             <button className="ghost" onClick={() => void rotatePassword()}>
+[Normal]               修改密碼（自動遷移敏感字段密文）
+[Normal]             </button>
+[Normal]             <button className="ghost" onClick={() => void exportBackup()}>
+[Normal]               導出密文備份（換設備用）
+[Normal]             </button>
+[Normal]             <button className="ghost" onClick={() => void importBackup()}>
+[Normal]               導入密文備份
+[Normal]             </button>
+[Normal]           </div>
+[Normal]           <h3>個人信息庫（投遞時自動互補，無重複單一來源）</h3>
+[Normal]           <table>
+[Normal]             <thead>
+[Normal]               <tr>
+[Normal]                 <th>字段</th>
+[Normal]                 <th>內容</th>
+[Normal]                 <th>來源</th>
+[Normal]                 <th></th>
+[Normal]               </tr>
+[Normal]             </thead>
+[Normal]             <tbody>
+[Normal]               {(data?.info_fields ?? []).map((f) => (
+[Normal]                 <tr key={f.key}>
+[Normal]                   <td>{KEY_LABELS[f.key] ?? f.key}{f.sensitive ? " 🔒" : ""}</td>
+[Normal]                   <td className="cell-wrap">
+[Normal]                     {f.sensitive && !revealed.has(f.key) ? (
+[Normal]                       <>
+[Normal]                         <span className="muted">{mask(f.value)}</span>{" "}
+[Normal]                         <button
+[Normal]                           className="ghost small"
+[Normal]                           onClick={() => setRevealed(new Set(revealed).add(f.key))}
+[Normal]                         >
+[Normal]                           顯示
+[Normal]                         </button>
+[Normal]                       </>
+[Normal]                     ) : (
+[Normal]                       f.value
+[Normal]                     )}
+[Normal]                   </td>
+[Normal]                   <td className="muted">{SOURCE_TEXT[f.source] ?? f.source}</td>
+[Normal]                   <td>
+[Normal]                     <button className="ghost" onClick={() => void delField(f.key)}>
+[Normal]                       {t("delete")}
+[Normal]                     </button>
+[Normal]                   </td>
+[Normal]                 </tr>
+[Normal]               ))}
+[Normal]             </tbody>
+[Normal]           </table>
+[Normal]           <div className="row wrap">
+[Normal]             <input placeholder="字段名（如：期望薪資）" value={newKey}
+[Normal]                    onChange={(e) => setNewKey(e.target.value)} />
+[Normal]             <input placeholder="內容" value={newVal}
+[Normal]                    onChange={(e) => setNewVal(e.target.value)} />
+[Normal]             <button onClick={() => void addField()}>添加</button>
+[Normal]           </div>
+[Normal]           {data?.profile.summary && (
+[Normal]             <>
+[Normal]               <h3>簡歷摘要（只讀，改簡歷後到「AI 畫像」重新生成）</h3>
+[Normal]               <p>{data.profile.summary}</p>
+[Normal]               <p className="muted cell-wrap">
+[Normal]                 教育：{(data.profile.education ?? [])
+[Normal]                   .map((e) => `${e.school ?? ""} ${e.degree ?? ""} ${e.major ?? ""}`.trim())
+[Normal]                   .filter(Boolean).join("；") || "—"}
+[Normal]                 <br />
+[Normal]                 經歷：{(data.profile.experiences ?? [])
+[Normal]                   .map((e) => `${e.title ?? ""} @ ${e.company ?? ""}`.trim())
+[Normal]                   .filter(Boolean).join("；") || "—"}
+[Normal]                 <br />
+[Normal]                 技能：{(data.profile.skills ?? []).map((s) => s.name).join("、") || "—"}
+[Normal]               </p>
+[Normal]             </>
+[Normal]           )}
+[Normal]           <p className="notice">{msg}</p>
+[Normal]         </div>
+[Normal]       </main>
+[Normal]     </div>
+[Normal]   );
+[Normal] }
+[Normal] import { useEffect, useState } from "react";
+[Normal] import { api } from "../lib/api";
+[Normal] type Settings = {
+[Normal]   ai_optimize_resume: boolean;
+[Normal]   ai_optimize_cover_letter: boolean;
+[Normal]   match_threshold: number;
+[Normal]   auto_apply_mode: "off" | "threshold" | "all";
+[Normal]   apply_rate_limit_min: number;
+[Normal]   push_time_local: string;
+[Normal]   timezone: string;
+[Normal]   daily_digest_enabled: boolean;
+[Normal]   login_expiry_notify: boolean;
+[Normal]   preferred_locations: string[] | null;
+[Normal]   location_weight: number;
+[Normal]   campus_preference: "campus" | "society" | "both";
+[Normal]   org_preference: "headquarter" | "branch" | "both";
+[Normal] };
+[Normal] const DEFAULTS: Settings = {
+[Normal]   ai_optimize_resume: false,
+[Normal]   ai_optimize_cover_letter: false,
+[Normal]   match_threshold: 70,
+[Normal]   auto_apply_mode: "threshold",
+[Normal]   apply_rate_limit_min: 5,
+[Normal]   push_time_local: "08:00",
+[Normal]   timezone: "Asia/Shanghai",
+[Normal]   daily_digest_enabled: true,
+[Normal]   login_expiry_notify: true,
+[Normal]   preferred_locations: [],
+[Normal]   location_weight: 10,
+[Normal]   campus_preference: "both",
+[Normal]   org_preference: "both",
+[Normal] };
+[Normal] type PushChannels = Record<string, string>;
+[Normal] export default function Settings() {
+[Normal]   const [s, setS] = useState<Settings>(DEFAULTS);
+[Normal]   const [channels, setChannels] = useState<PushChannels>({});
+[Normal]   const [chForm, setChForm] = useState({ channel: "pushplus", value: "" });
+[Normal]   const [msg, setMsg] = useState("");
+[Normal]   useEffect(() => {
+[Normal]     api<Settings>("/api/me/settings")
+[Normal]       .then(setS)
+[Normal]       .catch(() => setMsg("讀取設置失敗"));
+[Normal]     api<PushChannels>("/api/me/push-channels").then(setChannels).catch(() => {});
+[Normal]   }, []);
+[Normal]   async function saveChannel() {
+[Normal]     setMsg("");
+[Normal]     try {
+[Normal]       await api(`/api/me/push-channels?channel=${chForm.channel}`, {
+[Normal]         method: "PATCH",
+[Normal]         body: JSON.stringify({ value: chForm.value || null }),
+[Normal]       });
+[Normal]       setChForm({ ...chForm, value: "" });
+[Normal]       setChannels(await api<PushChannels>("/api/me/push-channels"));
+[Normal]       setMsg("推送渠道已更新");
+[Normal]     } catch (e) {
+[Normal]       setMsg(`保存失敗: ${(e as Error).message}`);
+[Normal]     }
+[Normal]   }
+[Normal]   async function save(patch: Partial<Settings>) {
+[Normal]     const next = { ...s, ...patch };
+[Normal]     setS(next);
+[Normal]     try {
+[Normal]       await api("/api/me/settings", { method: "PATCH", body: JSON.stringify(patch) });
+[Normal]       setMsg("已保存");
+[Normal]     } catch {
+[Normal]       setMsg("保存失敗");
+[Normal]     }
+[Normal]   }
+[Normal]   return (
+[Normal]     <div className="page">      <main className="narrow">
+[Normal]         <div className="card">
+[Normal]           <h2>投遞與推送設置</h2>
+[Normal]           <h3>AI 內容微調</h3>
+[Normal]           <label className="row">
+[Normal]             <input
+[Normal]               type="checkbox"
+[Normal]               checked={s.ai_optimize_resume}
+[Normal]               onChange={(e) => save({ ai_optimize_resume: e.target.checked })}
+[Normal]             />
+[Normal]             投遞時允許按崗位要求微調簡歷
+[Normal]           </label>
+[Normal]           <label className="row">
+[Normal]             <input
+[Normal]               type="checkbox"
+[Normal]               checked={s.ai_optimize_cover_letter}
+[Normal]               onChange={(e) => save({ ai_optimize_cover_letter: e.target.checked })}
+[Normal]             />
+[Normal]             投遞時允許按崗位要求生成/微調 Cover Letter
+[Normal]           </label>
+[Normal]           <h3>貼合度閾值</h3>
+[Normal]           <label className="row">
+[Normal]             <input
+[Normal]               type="range"
+[Normal]               min={50}
+[Normal]               max={100}
+[Normal]               step={5}
+[Normal]               value={s.match_threshold}
+[Normal]               onChange={(e) => save({ match_threshold: Number(e.target.value) })}
+[Normal]             />
+[Normal]             <b>{s.match_threshold}%</b> — 貼合度高於此值才推送/投遞
+[Normal]           </label>
+[Normal]           <h3>期望地區加權</h3>
+[Normal]           <p className="muted">命中期望城市的崗位加分，其他地區適度降分（影響貼合度排序與投遞）。</p>
+[Normal]           <label className="row">
+[Normal]             <input
+[Normal]               placeholder="期望城市，逗號分隔（如：上海,香港）"
+[Normal]               defaultValue={(s.preferred_locations ?? []).join(",")}
+[Normal]               onBlur={(e) =>
+[Normal]                 save({
+[Normal]                   preferred_locations: e.target.value
+[Normal]                     .split(/[,，]/)
+[Normal]                     .map((x) => x.trim())
+[Normal]                     .filter(Boolean),
+[Normal]                 })
+[Normal]               }
+[Normal]             />
+[Normal]           </label>
+[Normal]           <label className="row">
+[Normal]             <input
+[Normal]               type="range"
+[Normal]               min={0}
+[Normal]               max={25}
+[Normal]               step={5}
+[Normal]               value={s.location_weight}
+[Normal]               onChange={(e) => save({ location_weight: Number(e.target.value) })}
+[Normal]             />
+[Normal]             <b>+{s.location_weight}</b> 分 — 地區權重（非期望城市 -{Math.min(s.location_weight, 10)} 分）
+[Normal]           </label>
+[Normal]           <h3>校招/社招偏好</h3>
+[Normal]           <p className="muted">決定哪些崗位進入投遞隊列（校招與社招貼合度分開計算：校招對有工作經歷者降權 15 分）。</p>
+[Normal]           {(
+[Normal]             [
+[Normal]               ["campus", "只投校招（應屆/管培生）"],
+[Normal]               ["society", "只投社招"],
+[Normal]               ["both", "校招和社招都投（推薦：兩者都參與匹配排序）"],
+[Normal]             ] as const
+[Normal]           ).map(([value, desc]) => (
+[Normal]             <label className="row" key={value}>
+[Normal]               <input
+[Normal]                 type="radio"
+[Normal]                 name="campus_preference"
+[Normal]                 checked={s.campus_preference === value}
+[Normal]                 onChange={() => save({ campus_preference: value })}
+[Normal]               />
+[Normal]               {desc}
+[Normal]             </label>
+[Normal]           ))}
+[Normal]           <h3>總部/分支偏好（計入優先級，不影響貼合度）</h3>
+[Normal]           {(
+[Normal]             [
+[Normal]               ["headquarter", "總部優先（分支機構崗位優先級 -8）"],
+[Normal]               ["branch", "分支機構優先（總部崗位優先級 -5）"],
+[Normal]               ["both", "一視同仁（推薦）"],
+[Normal]             ] as const
+[Normal]           ).map(([value, desc]) => (
+[Normal]             <label className="row" key={value}>
+[Normal]               <input
+[Normal]                 type="radio"
+[Normal]                 name="org_preference"
+[Normal]                 checked={s.org_preference === value}
+[Normal]                 onChange={() => save({ org_preference: value })}
+[Normal]               />
+[Normal]               {desc}
+[Normal]             </label>
+[Normal]           ))}
+[Normal]           <h3>自動投遞模式</h3>
+[Normal]           {(
+[Normal]             [
+[Normal]               ["off", "關閉自動投遞：僅按閾值推送崗位"],
+[Normal]               ["threshold", "達標自動投遞：貼合度達標的崗位自動投遞"],
+[Normal]               ["all", "全自動投遞：所有崗位都投，無法完成的推送人工處理"],
+[Normal]             ] as const
+[Normal]           ).map(([value, desc]) => (
+[Normal]             <label className="row" key={value}>
+[Normal]               <input
+[Normal]                 type="radio"
+[Normal]                 name="mode"
+[Normal]                 checked={s.auto_apply_mode === value}
+[Normal]                 onChange={() => save({ auto_apply_mode: value })}
+[Normal]               />
+[Normal]               {desc}
+[Normal]             </label>
+[Normal]           ))}
+[Normal]           <h3>每日推送</h3>
+[Normal]           <label className="row">
+[Normal]             推送時間
+[Normal]             <select
+[Normal]               value={s.push_time_local.slice(0, 2)}
+[Normal]               onChange={(e) =>
+[Normal]                 save({ push_time_local: `${e.target.value}:${s.push_time_local.slice(3, 5)}` })
+[Normal]               }
+[Normal]             >
+[Normal]               {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0")).map((h) => (
+[Normal]                 <option key={h} value={h}>
+[Normal]                   {h} 時
+[Normal]                 </option>
+[Normal]               ))}
+[Normal]             </select>
+[Normal]             <select
+[Normal]               value={s.push_time_local.slice(3, 5)}
+[Normal]               onChange={(e) =>
+[Normal]                 save({ push_time_local: `${s.push_time_local.slice(0, 2)}:${e.target.value}` })
+[Normal]               }
+[Normal]             >
+[Normal]               {["00", "15", "30", "45"].map((mn) => (
+[Normal]                 <option key={mn} value={mn}>
+[Normal]                   {mn} 分
+[Normal]                 </option>
+[Normal]               ))}
+[Normal]             </select>
+[Normal]           </label>
+[Normal]           <label className="row">
+[Normal]             時區
+[Normal]             <select value={s.timezone} onChange={(e) => save({ timezone: e.target.value })}>
+[Normal]               <option value="Asia/Shanghai">北京時間 (UTC+8)</option>
+[Normal]               <option value="Asia/Hong_Kong">香港時間 (UTC+8)</option>
+[Normal]               <option value="Asia/Taipei">台北時間 (UTC+8)</option>
+[Normal]               <option value="Asia/Singapore">新加坡時間 (UTC+8)</option>
+[Normal]               <option value="America/Los_Angeles">美西 (UTC-8)</option>
+[Normal]               <option value="America/New_York">美東 (UTC-5)</option>
+[Normal]               <option value="Europe/London">倫敦 (UTC+0)</option>
+[Normal]             </select>
+[Normal]           </label>
+[Normal]           <label className="row">
+[Normal]             <input
+[Normal]               type="checkbox"
+[Normal]               checked={s.daily_digest_enabled}
+[Normal]               onChange={(e) => save({ daily_digest_enabled: e.target.checked })}
+[Normal]             />
+[Normal]             啟用每日摘要推送
+[Normal]           </label>
+[Normal]           <label className="row">
+[Normal]             <input
+[Normal]               type="checkbox"
+[Normal]               checked={s.login_expiry_notify}
+[Normal]               onChange={(e) => save({ login_expiry_notify: e.target.checked })}
+[Normal]             />
+[Normal]             平台登錄態失效時提醒我
+[Normal]           </label>
+[Normal]           <h3>推送渠道（FR-1h，token 加密存儲）</h3>
+[Normal]           <p className="muted">
+[Normal]             已配置：{Object.entries(channels).length ? Object.entries(channels).map(([k, v]) => `${k}(${v})`).join("、") : "無"}
+[Normal]           </p>
+[Normal]           <div className="row wrap">
+[Normal]             <select
+[Normal]               value={chForm.channel}
+[Normal]               onChange={(e) => setChForm({ ...chForm, channel: e.target.value })}
+[Normal]             >
+[Normal]               <option value="pushplus">PushPlus（微信，需實名，每日200條免費）</option>
+[Normal]               <option value="wecom">企業微信群機器人 webhook</option>
+[Normal]               <option value="email">郵箱地址</option>
+[Normal]             </select>
+[Normal]             <input
+[Normal]               placeholder={
+[Normal]                 chForm.channel === "email" ? "你的郵箱" : chForm.channel === "wecom"
+[Normal]                   ? "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…" : "PushPlus token"
+[Normal]               }
+[Normal]               value={chForm.value}
+[Normal]               onChange={(e) => setChForm({ ...chForm, value: e.target.value })}
+[Normal]             />
+[Normal]             <button onClick={() => void saveChannel()}>保存渠道</button>
+[Normal]           </div>
+[Normal]           <p className="notice">{msg}</p>
+[Normal]         </div>
+[Normal]       </main>
+[Normal]     </div>
+[Normal]   );
+[Normal] }
+[Normal] import { useEffect, useState } from "react";
+[Normal] import { api } from "../lib/api";
+[Normal] type Task = {
+[Normal]   id: string;
+[Normal]   task_type: string;
+[Normal]   question: string;
+[Normal]   options: Record<string, { label: string; type: string }>;
+[Normal]   status: string;
+[Normal]   created_at: string;
+[Normal]   expires_at: string;
+[Normal]   application_status: string;
+[Normal]   company_name: string;
+[Normal]   title: string;
+[Normal] };
+[Normal] const TYPE_TEXT: Record<string, string> = {
+[Normal]   captcha: "驗證碼",
+[Normal]   login_required: "需要登錄",
+[Normal]   missing_field: "缺字段",
+[Normal]   missing_file: "缺文件",
+[Normal]   confirm_content: "確認內容",
+[Normal]   citics_manual: "中信官網投遞",
+[Normal]   manual_citics_login: "中信官網投遞",
+[Normal]   other: "其他",
+[Normal] };
+[Normal] export default function Tasks() {
+[Normal]   const [items, setItems] = useState<Task[]>([]);
+[Normal]   const [answers, setAnswers] = useState<Record<string, Record<string, string | boolean>>>({});
+[Normal]   const [msg, setMsg] = useState("");
+[Normal]   async function load() {
+[Normal]     try {
+[Normal]       setItems(await api<Task[]>("/api/manual-tasks?status=open"));
+[Normal]     } catch {
+[Normal]       setMsg("讀取任務失敗");
+[Normal]     }
+[Normal]   }
+[Normal]   useEffect(() => {
+[Normal]     void load();
+[Normal]   }, []);
+[Normal]   function setAnswer(taskId: string, key: string, value: string | boolean) {
+[Normal]     setAnswers((prev) => ({ ...prev, [taskId]: { ...(prev[taskId] ?? {}), [key]: value } }));
+[Normal]   }
+[Normal]   async function submit(task: Task) {
+[Normal]     setMsg("提交中（提交後會自動重新投遞）…");
+[Normal]     try {
+[Normal]       const r = await api<Record<string, unknown>>(`/api/manual-tasks/${task.id}/answer`, {
+[Normal]         method: "POST",
+[Normal]         body: JSON.stringify({ answer: answers[task.id] ?? {} }),
+[Normal]       });
+[Normal]       setMsg(`已提交並重新投遞：${JSON.stringify(r)}`);
+[Normal]       await load();
+[Normal]     } catch (e) {
+[Normal]       setMsg(`提交失敗: ${(e as Error).message}`);
+[Normal]     }
+[Normal]   }
+[Normal]   async function fillPlan(task: Task) {
+[Normal]     try {
+[Normal]       const p = await api<{ copy_text: string }>(`/api/manual-tasks/${task.id}/fill-plan`);
+[Normal]       await navigator.clipboard.writeText(p.copy_text);
+[Normal]       setMsg("✅ 填寫方案已複製到剪貼板，粘貼到官網對應欄位即可");
+[Normal]     } catch (e) {
+[Normal]       setMsg(`獲取填寫方案失敗: ${(e as Error).message}`);
+[Normal]     }
+[Normal]   }
+[Normal]   async function cancel(task: Task) {
+[Normal]     if (!confirm("取消後該投遞將標記為放棄，確認？")) return;
+[Normal]     await api(`/api/manual-tasks/${task.id}/cancel`, { method: "POST" });
+[Normal]     await load();
+[Normal]   }
+[Normal]   return (
+[Normal]     <div className="page">      <main className="narrow">
+[Normal]         <div className="card wide">
+[Normal]           <h2>待你處理</h2>
+[Normal]           <p className="muted">
+[Normal]             投遞遇到驗證碼、缺字段、缺文件時會暫停並在這裡等你。填寫/確認後系統自動在原位置繼續投遞。
+[Normal]           </p>
+[Normal]           {items.length === 0 && <p>暫無待處理任務 🎉</p>}
+[Normal]           {items.map((t) => (
+[Normal]             <div key={t.id} className="task">
+[Normal]               <h3>
+[Normal]                 [{TYPE_TEXT[t.task_type] ?? t.task_type}] {t.company_name} · {t.title}
+[Normal]               </h3>
+[Normal]               <p>{t.question}</p>
+[Normal]               {["citics_manual", "manual_citics_login"].includes(t.task_type) && (
+[Normal]                 <>
+[Normal]                   <p className="muted">
+[Normal]                     🤖 推薦使用 RPA 填報助手（Chrome 擴展）：在官網登錄並打開申請頁後，點擴展「開始填報此頁」
+[Normal]                     即可自動填寫全部欄位+上傳簡歷，你只需檢查並點提交。
+[Normal]                     安裝：chrome://extensions → 開發者模式 → 載入未封裝項目 → 選擇項目 chrome-extension/ 目錄。
+[Normal]                   </p>
+[Normal]                   <button className="ghost" onClick={() => void fillPlan(t)}>
+[Normal]                     📋 一鍵複製填寫方案（備用）
+[Normal]                   </button>
+[Normal]                 </>
+[Normal]               )}
+[Normal]               <div className="column">
+[Normal]                 {Object.entries(t.options ?? {}).map(([key, opt]) => (
+[Normal]                   <label key={key} className="row">
+[Normal]                     {opt.type === "checkbox" ? (
+[Normal]                       <input
+[Normal]                         type="checkbox"
+[Normal]                         checked={Boolean(answers[t.id]?.[key])}
+[Normal]                         onChange={(e) => setAnswer(t.id, key, e.target.checked)}
+[Normal]                       />
+[Normal]                     ) : opt.type === "textarea" ? (
+[Normal]                       <textarea
+[Normal]                         style={{ flex: 1, minHeight: 70 }}
+[Normal]                         placeholder={opt.label}
+[Normal]                         onChange={(e) => setAnswer(t.id, key, e.target.value)}
+[Normal]                       />
+[Normal]                     ) : (
+[Normal]                       <input
+[Normal]                         style={{ flex: 1 }}
+[Normal]                         placeholder={opt.label}
+[Normal]                         onChange={(e) => setAnswer(t.id, key, e.target.value)}
+[Normal]                       />
+[Normal]                     )}
+[Normal]                     <span className="muted">{opt.label}</span>
+[Normal]                   </label>
+[Normal]                 ))}
+[Normal]               </div>
+[Normal]               <div className="row">
+[Normal]                 <button onClick={() => void submit(t)}>提交並繼續投遞</button>
+[Normal]                 <button className="ghost" onClick={() => void cancel(t)}>
+[Normal]                   放棄此投遞
+[Normal]                 </button>
+[Normal]               </div>
+[Normal]               <p className="muted">
+[Normal]                 過期時間：{t.expires_at}（48 小時未處理自動過期）
+[Normal]               </p>
+[Normal]             </div>
+[Normal]           ))}
+[Normal]           <p className="notice">{msg}</p>
+[Normal]         </div>
+[Normal]       </main>
+[Normal]     </div>
+[Normal]   );
+[Normal] }
+[Normal] /** JobsComing RPA 填報助手 — service worker（代持 API 請求，繞過 CORS）。 */
+[Normal] const API_BASE = "https://jobscoming-backend.onrender.com";
+[Normal] function withTimeout(ms) {
+[Normal]   return new AbortController();
+[Normal] }
+[Normal] async function timedFetch(url, opts, ms) {
+[Normal]   const ctrl = new AbortController();
+[Normal]   const t = setTimeout(() => ctrl.abort(), ms);
+[Normal]   try {
+[Normal]     return await fetch(url, { ...opts, signal: ctrl.signal });
+[Normal]   } finally {
+[Normal]     clearTimeout(t);
+[Normal]   }
+[Normal] }
+[Normal] async function apiFetch(path, options = {}) {
+[Normal]   const { token, refreshToken } = await chrome.storage.local.get(["token", "refreshToken"]);
+[Normal]   const doFetch = (tk) =>
+[Normal]     fetch(API_BASE + path, {
+[Normal]       ...options,
+[Normal]       headers: {
+[Normal]         "Content-Type": "application/json",
+[Normal]         ...(tk ? { Authorization: `Bearer ${tk}` } : {}),
+[Normal]         ...(options.headers || {}),
+[Normal]       },
+[Normal]     });
+[Normal]   // 45 秒超時 + 失敗重試一次（後台冷啟動可能需要時間）
+[Normal]   let res;
+[Normal]   try {
+[Normal]     res = await timedFetch(API_BASE + path, {
+[Normal]       ...options,
+[Normal]       headers: {
+[Normal]         "Content-Type": "application/json",
+[Normal]         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+[Normal]         ...(options.headers || {}),
+[Normal]       },
+[Normal]     }, 45000);
+[Normal]   } catch {
+[Normal]     res = await timedFetch(API_BASE + path, {
+[Normal]       ...options,
+[Normal]       headers: {
+[Normal]         "Content-Type": "application/json",
+[Normal]         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+[Normal]         ...(options.headers || {}),
+[Normal]       },
+[Normal]     }, 45000);
+[Normal]   }
+[Normal]   // 401 → 自動用 refresh token 續期並重試一次
+[Normal]   if (res.status === 401 && refreshToken) {
+[Normal]     try {
+[Normal]       const r = await fetch(API_BASE + "/api/auth/refresh", {
+[Normal]         method: "POST",
+[Normal]         headers: { "Content-Type": "application/json" },
+[Normal]         body: JSON.stringify({ refresh_token: refreshToken }),
+[Normal]       });
+[Normal]       if (r.ok) {
+[Normal]         const data = await r.json();
+[Normal]         await chrome.storage.local.set({
+[Normal]           token: data.access_token,
+[Normal]           refreshToken: data.refresh_token || refreshToken,
+[Normal]         });
+[Normal]         res = await timedFetch(API_BASE + path, {
+[Normal]           ...options,
+[Normal]           headers: {
+[Normal]             "Content-Type": "application/json",
+[Normal]             ...(data.access_token ? { Authorization: `Bearer ${data.access_token}` } : {}),
+[Normal]             ...(options.headers || {}),
+[Normal]           },
+[Normal]         }, 45000);
+[Normal]       }
+[Normal]     } catch {
+[Normal]       /* 續期失敗走下方 AUTH 流程 */
+[Normal]     }
+[Normal]   }
+[Normal]   if (res.status === 401) {
+[Normal]     // 續期也失敗 → 清除憑證，通知 popup 顯示登錄框
+[Normal]     await chrome.storage.local.remove(["token", "refreshToken"]);
+[Normal]     const err = new Error("AUTH_EXPIRED");
+[Normal]     err.authExpired = true;
+[Normal]     throw err;
+[Normal]   }
+[Normal]   if (!res.ok) {
+[Normal]     const body = await res.text().catch(() => "");
+[Normal]     throw new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`);
+[Normal]   }
+[Normal]   if (res.status === 204) return null;
+[Normal]   return res.json();
+[Normal] }
+[Normal] chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+[Normal]   (async () => {
+[Normal]     try {
+[Normal]       switch (msg.type) {
+[Normal]         case "SIGNIN": {
+[Normal]           const data = await apiFetch("/api/auth/signin", {
+[Normal]             method: "POST",
+[Normal]             body: JSON.stringify({ email: msg.email, password: msg.password }),
+[Normal]           });
+[Normal]           await chrome.storage.local.set({
+[Normal]             token: data.access_token,
+[Normal]             refreshToken: data.refresh_token || "",
+[Normal]           });
+[Normal]           sendResponse({ ok: true });
+[Normal]           break;
+[Normal]         }
+[Normal]         case "TASKS": {
+[Normal]           const tasks = await apiFetch("/api/manual-tasks?status=open");
+[Normal]           sendResponse({ ok: true, tasks });
+[Normal]           break;
+[Normal]         }
+[Normal]         case "FILL_PLAN": {
+[Normal]           const plan = await apiFetch(`/api/manual-tasks/${msg.taskId}/fill-plan`);
+[Normal]           sendResponse({ ok: true, plan });
+[Normal]           break;
+[Normal]         }
+[Normal]         case "COMPLETE": {
+[Normal]           const out = await apiFetch(`/api/manual-tasks/${msg.taskId}/answer`, {
+[Normal]             method: "POST",
+[Normal]             body: JSON.stringify({ answer: msg.answer }),
+[Normal]           });
+[Normal]           sendResponse({ ok: true, out });
+[Normal]           break;
+[Normal]         }
+[Normal]         case "DOWNLOAD": {
+[Normal]           // 經由後台下載簡歷（返回 dataURL，content script 塞進 file input）
+[Normal]           const { token } = await chrome.storage.local.get("token");
+[Normal]           const res = await fetch(msg.url);
+[Normal]           const blob = await res.blob();
+[Normal]           const dataUrl = await new Promise((resolve) => {
+[Normal]             const fr = new FileReader();
+[Normal]             fr.onload = () => resolve(fr.result);
+[Normal]             fr.readAsDataURL(blob);
+[Normal]           });
+[Normal]           sendResponse({ ok: true, dataUrl });
+[Normal]           break;
+[Normal]         }
+[Normal]         case "SCRAPE_SAVE": {
+[Normal]           const out = await apiFetch("/api/rpa/scrape", {
+[Normal]             method: "POST",
+[Normal]             body: JSON.stringify({ site: msg.site, page_type: msg.pageType, fields: msg.fields }),
+[Normal]           });
+[Normal]           sendResponse({ ok: true, out });
+[Normal]           break;
+[Normal]         }
+[Normal]         case "RPA_FIELDS": {
+[Normal]           const fields = await apiFetch("/api/rpa/fields");
+[Normal]           sendResponse({ ok: true, fields });
+[Normal]           break;
+[Normal]         }
+[Normal]         case "PINYIN": {
+[Normal]           const out = await apiFetch(`/api/rpa/pinyin?name=${encodeURIComponent(msg.name || "")}`);
+[Normal]           sendResponse({ ok: true, out });
+[Normal]           break;
+[Normal]         }
+[Normal]         case "RPA_VERIFY": {
+[Normal]           const out = await apiFetch("/api/rpa/verify", {
+[Normal]             method: "POST",
+[Normal]             body: JSON.stringify({
+[Normal]               site: msg.site, page_type: msg.pageType,
+[Normal]               compare_with: msg.compareWith, fields: msg.fields,
+[Normal]             }),
+[Normal]           });
+[Normal]           sendResponse({ ok: true, out });
+[Normal]           break;
+[Normal]         }
+[Normal]         default:
+[Normal]           sendResponse({ ok: false, error: "unknown message" });
+[Normal]       }
+[Normal]     } catch (e) {
+[Normal]       sendResponse({
+[Normal]         ok: false,
+[Normal]         error: e && e.authExpired ? "AUTH_EXPIRED" : String(e.message || e),
+[Normal]       });
+[Normal]     }
+[Normal]   })();
+[Normal]   return true; // 異步響應
+[Normal] });
+[Normal] /** JobsComing RPA 填報引擎 v0.6.1 — 單一 IIFE，全同步微操作 + 消息監聽。 */
+[Normal] (() => {
+[Normal]   const GUARD = "__jobsfly_rpa_v2__";
+[Normal]   if (window[GUARD]) return;
+[Normal]   window[GUARD] = true;
+[Normal]   /** 從網址自動識別中信簡歷類型（name=xiaozhao-cn 等） */
+[Normal]   function detectPageType() {
+[Normal]     try {
+[Normal]       const u = new URL(location.href);
+[Normal]       const name = u.searchParams.get("name") || "";
+[Normal]       const map = {
+[Normal]         "xiaozhao-cn": "校園招聘簡歷",
+[Normal]         "xiaozhao-fz": "分支校園招聘簡歷",
+[Normal]         "shezhao-cn": "社會招聘簡歷",
+[Normal]         "shezhao-fz": "分支社會招聘簡歷",
+[Normal]       };
+[Normal]       return map[name] || "";
+[Normal]     } catch {
+[Normal]       return "";
+[Normal]     }
+[Normal]   }
+[Normal]   let panel = null;
+[Normal]   function log(text, ok) {
+[Normal]     if (!panel) return;
+[Normal]     const line = document.createElement("div");
+[Normal]     line.textContent = text;
+[Normal]     line.style.color = ok === false ? "#dc2626" : ok ? "#15803d" : "#374151";
+[Normal]     panel.querySelector(".jrpa-log").appendChild(line);
+[Normal]   }
+[Normal]   function showPanel(title) {
+[Normal]     if (panel && panel.isConnected) return;
+[Normal]     panel = document.createElement("div");
+[Normal]     panel.style.cssText = [
+[Normal]       "position:fixed;right:16px;bottom:16px;z-index:99999;width:300px;",
+[Normal]       "background:#fff;border:1px solid #e5e7eb;border-radius:10px;",
+[Normal]       "box-shadow:0 8px 30px rgba(0,0,0,.18);padding:12px;font:13px/1.5 system-ui;",
+[Normal]     ].join("");
+[Normal]     panel.innerHTML =
+[Normal]       `<b>🤖 JobsComing RPA 填報</b><div style="color:#6b7280;margin:2px 0 6px">${title}</div>` +
+[Normal]       `<div class="jrpa-log" style="max-height:180px;overflow:auto"></div>`;
+[Normal]     document.body.appendChild(panel);
+[Normal]   }
+[Normal]   function collectFields() {
+[Normal]     const out = [];
+[Normal]     document.querySelectorAll("input:not([type=hidden]), textarea, select").forEach((el) => {
+[Normal]       out.push({
+[Normal]         el,
+[Normal]         label: labelFor(el),
+[Normal]         context: contextFor(el),
+[Normal]         type: (el.type || el.tagName.toLowerCase()),
+[Normal]         isFile: el.type === "file",
+[Normal]         isSelect: el.tagName.toLowerCase() === "select",
+[Normal]       });
+[Normal]     });
+[Normal]     return out;
+[Normal]   }
+[Normal]   /** 精確提取欄位標籤：label 元素 → 表單項 label → placeholder/name，避免抓到整塊長文本。 */
+[Normal]   function labelFor(el) {
+[Normal]     const ok = (t) => t && t.length >= 1 && t.length <= 40;
+[Normal]     if (el.labels && el.labels[0]) {
+[Normal]       const t = el.labels[0].innerText.trim();
+[Normal]       if (ok(t)) return t;
+[Normal]     }
+[Normal]     const item = el.closest(".el-form-item, .form-item, .ant-form-item, .ivu-form-item, .form-group");
+[Normal]     if (item) {
+[Normal]       const lab = item.querySelector(":scope > label, .el-form-item__label, .form-label, .label, .ant-form-item-label");
+[Normal]       if (lab) {
+[Normal]         const t = lab.innerText.trim();
+[Normal]         if (ok(t)) return t;
+[Normal]       }
+[Normal]     }
+[Normal]     if (el.placeholder && ok(el.placeholder.trim())) return el.placeholder.trim();
+[Normal]     if (el.name && ok(el.name)) return el.name;
+[Normal]     return "";
+[Normal]   }
+[Normal]   /** 上下文聯想：重複 label 時（如父親/母親的工作單位）取前面緊鄰的說明文本。 */
+[Normal]   function contextFor(el) {
+[Normal]     const item = el.closest(".el-form-item, .form-item, .ant-form-item, .ivu-form-item");
+[Normal]     if (!item || !item.parentElement) return "";
+[Normal]     const siblings = Array.from(item.parentElement.children);
+[Normal]     const idx = siblings.indexOf(item);
+[Normal]     for (let i = idx - 1; i >= 0 && i >= idx - 2; i--) {
+[Normal]       const t = (siblings[i].innerText || "").trim();
+[Normal]       if (t && t.length <= 20 && !t.includes("：") && t !== item.innerText.trim()) {
+[Normal]         return t.slice(0, 20);
+[Normal]       }
+[Normal]     }
+[Normal]     return "";
+[Normal]   }
+[Normal]   function matchScore(label, field) {
+[Normal]     const l = label.toLowerCase();
+[Normal]     const f = (field.label || "").toLowerCase();
+[Normal]     const k = (field.key || "").toLowerCase();
+[Normal]     const short = (s) => s.length >= 1 && s.length <= 12;
+[Normal]     // 精確/包含匹配僅限短標籤（長文本 label 不得參與模糊包含，防止誤填）
+[Normal]     if (short(l) && short(f) && (l.includes(f) || f.includes(l))) return 3;
+[Normal]     if (short(l) && short(k) && (l.includes(k) || k.includes(l))) return 3;
+[Normal]     if (l === f) return 3;
+[Normal]     const map = {
+[Normal]       name: ["姓名", "名字", "name"],
+[Normal]       phone: ["手機", "电话", "电话", "mobile", "phone", "联系方式"],
+[Normal]       email: ["郵箱", "邮箱", "email", "电子邮箱", "電子郵箱"],
+[Normal]       visa: ["簽證", "签证", "visa"],
+[Normal]       salary: ["薪資", "薪资", "薪酬", "期望薪", "salary"],
+[Normal]       availability: ["到崗", "到岗", "入職", "入职", "available"],
+[Normal]       skills: ["技能", "特长", "擅長", "skill"],
+[Normal]       experience: ["工作經歷", "工作经历", "實習經歷", "实习经历", "工作經驗", "experience"],
+[Normal]       education: ["教育", "学历", "學歷", "學校", "学校", "毕业", "education"],
+[Normal]     };
+[Normal]     if (short(l)) {
+[Normal]       const kws = map[field.key] || [];
+[Normal]       if (kws.some((w) => l.includes(w))) return 1;
+[Normal]     }
+[Normal]     return 0;
+[Normal]   }
+[Normal]   /** 姓/名拆分與下拉值適配。 */
+[Normal]   function adaptValue(fieldInfo, field, value) {
+[Normal]     const l = (fieldInfo.label || "").toLowerCase();
+[Normal]     if (field.key === "name" && (l === "姓" || l === "姓氏")) return String(value || "").slice(0, 1);
+[Normal]     if (field.key === "name" && l === "名") return String(value || "").slice(1);
+[Normal]     return value;
+[Normal]   }
+[Normal]   function fillValue(fieldInfo, value) {
+[Normal]     const { el, isSelect } = fieldInfo;
+[Normal]     if (el.readOnly || el.disabled) return false;
+[Normal]     try {
+[Normal]       if (isSelect) {
+[Normal]         const opts = Array.from(el.options);
+[Normal]         const target = opts.find((o) => o.text.includes(value) || value.includes(o.text));
+[Normal]         if (target) {
+[Normal]           el.value = target.value;
+[Normal]           el.dispatchEvent(new Event("change", { bubbles: true }));
+[Normal]           return true;
+[Normal]         }
+[Normal]         return false;
+[Normal]       }
+[Normal]       const proto = el.tagName.toLowerCase() === "textarea"
+[Normal]         ? window.HTMLTextAreaElement.prototype
+[Normal]         : window.HTMLInputElement.prototype;
+[Normal]       const setter = Object.getOwnPropertyDescriptor(proto, "value").set;
+[Normal]       setter.call(el, value);
+[Normal]       el.dispatchEvent(new Event("input", { bubbles: true }));
+[Normal]       el.dispatchEvent(new Event("change", { bubbles: true }));
+[Normal]       el.style.outline = "2px solid #16a34a";
+[Normal]       el.style.outlineOffset = "2px";
+[Normal]       return true;
+[Normal]     } catch {
+[Normal]       return false;
+[Normal]     }
+[Normal]   }
+[Normal]   // ── 同步 API（popup 以 executeScript 直接調用，頁面側零異步）──
+[Normal]   function syncCollect() {
+[Normal]     return collectFields()
+[Normal]       .filter((f) => !f.isFile)
+[Normal]       .map((f) => ({
+[Normal]         // 上下文聯想：重複 label 加前綴（如「父親｜工作單位」）
+[Normal]         label: f.context ? `${f.context}｜${f.label}` : f.label,
+[Normal]         value: f.el.value || "",
+[Normal]       }));
+[Normal]   }
+[Normal]   function syncFill(entries) {
+[Normal]     const fields = collectFields();
+[Normal]     let filled = 0;
+[Normal]     const skipped = [];
+[Normal]     for (const f of fields) {
+[Normal]       if (f.isFile) continue;
+[Normal]       if (!f.label) continue;
+[Normal]       // 拼音欄位：僅當有對應拼音數據時填充
+[Normal]       if (f.label.includes("拼音")) {
+[Normal]         const py = (entries || []).find((e) => String(e.label || "").split("｜").pop() === f.label);
+[Normal]         if (py && py.value) {
+[Normal]           if (fillValue(f, String(py.value))) filled++;
+[Normal]         } else {
+[Normal]           skipped.push(f.label);
+[Normal]         }
+[Normal]         continue;
+[Normal]       }
+[Normal]       const best = (entries || [])
+[Normal]         .map((m) => {
+[Normal]           const parts = String(m.label || "").split("｜");
+[Normal]           const ctx = parts.length > 1 ? parts[0] : "";
+[Normal]           const plainLabel = parts.pop();
+[Normal]           let s = matchScore(f.label, { ...m, label: plainLabel });
+[Normal]           // 上下文聯想優先：父親/母親等前綴一致 +5
+[Normal]           if (ctx && f.context && (f.context.includes(ctx) || ctx.includes(f.context))) s += 5;
+[Normal]           else if (ctx && f.label.includes("父") && ctx.includes("父")) s += 5;
+[Normal]           else if (ctx && f.label.includes("母") && ctx.includes("母")) s += 5;
+[Normal]           else if (ctx && f.label.includes(ctx)) s += 5;
+[Normal]           return { m, plainLabel, s };
+[Normal]         })
+[Normal]         .filter((x) => x.s > 0 && x.m.value)
+[Normal]         .sort((a, b) => b.s - a.s)[0];
+[Normal]       if (best) {
+[Normal]         const v = adaptValue(f, best.m, String(best.m.value));
+[Normal]         if (fillValue(f, v)) filled++;
+[Normal]       } else {
+[Normal]         skipped.push(f.label);
+[Normal]       }
+[Normal]     }
+[Normal]     const detail = fields
+[Normal]       .filter((f) => f.label && !f.isFile)
+[Normal]       .slice(0, 40)
+[Normal]       .map((f) => ({
+[Normal]         label: f.label,
+[Normal]         filled: f.el.style.outline ? true : false,
+[Normal]       }));
+[Normal]     return { filled, skipped, detail };
+[Normal]   }
+[Normal]   function syncUploadResume(fileInfo) {
+[Normal]     const inputs = collectFields().filter((f) => f.isFile).map((f) => f.el);
+[Normal]     if (!inputs.length) return { uploaded: false, note: "本頁無文件上傳欄位" };
+[Normal]     if (!fileInfo || !fileInfo.dataUrl) return { uploaded: false, note: "無簡歷文件" };
+[Normal]     try {
+[Normal]       const b64 = fileInfo.dataUrl.split(",")[1];
+[Normal]       const bin = atob(b64);
+[Normal]       const arr = new Uint8Array(bin.length);
+[Normal]       for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+[Normal]       const file = new File([arr], fileInfo.name || "resume.pdf", { type: "application/pdf" });
+[Normal]       const dt = new DataTransfer();
+[Normal]       dt.items.add(file);
+[Normal]       inputs[0].files = dt.files;
+[Normal]       inputs[0].dispatchEvent(new Event("change", { bubbles: true }));
+[Normal]       inputs[0].style.outline = "2px solid #16a34a";
+[Normal]       return { uploaded: true, name: file.name };
+[Normal]     } catch (e) {
+[Normal]       return { uploaded: false, note: String(e) };
+[Normal]     }
+[Normal]   }
+[Normal]   function syncPanel(title, lines) {
+[Normal]     showPanel(title);
+[Normal]     for (const l of lines || []) log(l.text, l.ok);
+[Normal]   }
+[Normal]   window.__jrpa_sync__ = {
+[Normal]     collect: syncCollect,
+[Normal]     fill: syncFill,
+[Normal]     upload: syncUploadResume,
+[Normal]     panel: syncPanel,
+[Normal]     detectPageType,
+[Normal]   };
+[Normal]   window.__jrpa_run_v3__ = true;
+[Normal] })();
+[Normal] const $ = (id) => document.getElementById(id);
+[Normal] /* ── E2EE 密鑰（隱私第二層）：PBKDF2(密碼, 郵箱) → AES-GCM ── */
+[Normal] const _b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+[Normal] const _unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+[Normal] async function deriveKeyB64(password, salt) {
+[Normal]   const enc = new TextEncoder();
+[Normal]   const base = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
+[Normal]   const key = await crypto.subtle.deriveKey(
+[Normal]     { name: "PBKDF2", salt: enc.encode(salt), iterations: 100000, hash: "SHA-256" },
+[Normal]     base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"],
+[Normal]   );
+[Normal]   const raw = await crypto.subtle.exportKey("raw", key);
+[Normal]   return _b64(raw);
+[Normal] }
+[Normal] async function encryptText(keyB64, text) {
+[Normal]   const key = await crypto.subtle.importKey("raw", _unb64(keyB64), "AES-GCM", false, ["encrypt"]);
+[Normal]   const iv = crypto.getRandomValues(new Uint8Array(12));
+[Normal]   const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(text));
+[Normal]   return _b64(iv) + "|" + _b64(ct);
+[Normal] }
+[Normal] async function decryptText(keyB64, data) {
+[Normal]   if (!data || !data.includes("|")) return null;
+[Normal]   try {
+[Normal]     const [ivS, ctS] = data.split("|");
+[Normal]     const key = await crypto.subtle.importKey("raw", _unb64(keyB64), "AES-GCM", false, ["decrypt"]);
+[Normal]     const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: _unb64(ivS) }, key, _unb64(ctS));
+[Normal]     return new TextDecoder().decode(pt);
+[Normal]   } catch {
+[Normal]     return null;
+[Normal]   }
+[Normal] }
+[Normal] const SENSITIVE_RE = /證件|证件|身份證|身份证|護照|护照|家庭|親屬|亲属|緊急聯繫|紧急联系|證件號|证件号|地址|邮编|郵編|電話|电话|手機|手机|姓名拼音|父|母/;
+[Normal] async function getKeyB64() {
+[Normal]   const st = await chrome.storage.session.get("rawKeyB64");
+[Normal]   return st.rawKeyB64 || null;
+[Normal] }
+[Normal] const SITE_RE = /citics\.com|gtht\.com|greenhouse\.io|lever\.co/;
+[Normal] function showLogin() {
+[Normal]   $("loginBox").style.display = "block";
+[Normal]   $("taskBox").style.display = "none";
+[Normal]   $("status").textContent = "登錄已失效，請重新登錄";
+[Normal]   $("status").className = "err";
+[Normal] }
+[Normal] function isAuthError(e) {
+[Normal]   return !!e && (e.authExpired || String(e.message || e).includes("AUTH_EXPIRED"));
+[Normal] }
+[Normal] chrome.storage.local.get("token").then(({ token }) => {
+[Normal]   if (token) showTasks().catch((e) => isAuthError(e) && showLogin());
+[Normal]   else showLogin();
+[Normal] });
+[Normal] $("signin").addEventListener("click", async () => {
+[Normal]   $("status").textContent = "登錄中…";
+[Normal]   const email = $("email").value.trim();
+[Normal]   const password = $("password").value;
+[Normal]   const r = await chrome.runtime.sendMessage({
+[Normal]     type: "SIGNIN",
+[Normal]     email,
+[Normal]     password,
+[Normal]   });
+[Normal]   if (r && r.ok) {
+[Normal]     // 派生 E2EE 密鑰（僅存瀏覽器 session，關閉瀏覽器即清除）
+[Normal]     const keyB64 = await deriveKeyB64(password, "jobfly:" + email);
+[Normal]     await chrome.storage.session.set({ rawKeyB64: keyB64 });
+[Normal]     $("password").value = "";
+[Normal]     showTasks();
+[Normal]   } else {
+[Normal]     $("status").textContent = "登錄失敗: " + (r?.error || "未知錯誤");
+[Normal]     $("status").className = "err";
+[Normal]   }
+[Normal] });
+[Normal] $("refresh").addEventListener("click", () => {
+[Normal]   loadTasks().catch((e) => isAuthError(e) && showLogin());
+[Normal] });
+[Normal] async function showTasks() {
+[Normal]   $("loginBox").style.display = "none";
+[Normal]   $("taskBox").style.display = "block";
+[Normal]   await loadTasks();
+[Normal] }
+[Normal] async function loadTasks() {
+[Normal]   $("status").textContent = "讀取任務…";
+[Normal]   let r;
+[Normal]   try {
+[Normal]     r = await chrome.runtime.sendMessage({ type: "TASKS" });
+[Normal]   } catch (e) {
+[Normal]     $("status").textContent = "讀取失敗: " + (e?.message || e);
+[Normal]     $("status").className = "err";
+[Normal]     return;
+[Normal]   }
+[Normal]   if (!r || !r.ok) {
+[Normal]     if (isAuthError(r?.error)) {
+[Normal]       showLogin();
+[Normal]       return;
+[Normal]     }
+[Normal]     $("status").textContent = "讀取失敗: " + (r?.error || "");
+[Normal]     $("status").className = "err";
+[Normal]     return;
+[Normal]   }
+[Normal]   const box = $("tasks");
+[Normal]   box.innerHTML = "";
+[Normal]   if (!r.tasks.length) {
+[Normal]     box.innerHTML = '<p class="muted">暫無待處理投遞任務</p>';
+[Normal]     $("status").textContent = "";
+[Normal]     return;
+[Normal]   }
+[Normal]   for (const t of r.tasks) {
+[Normal]     const div = document.createElement("div");
+[Normal]     div.className = "task";
+[Normal]     div.innerHTML =
+[Normal]       `<b>${t.company_name} · ${t.title}</b>` +
+[Normal]       `<span class="muted">${t.task_type}</span>`;
+[Normal]     const btn = document.createElement("button");
+[Normal]     btn.className = "primary";
+[Normal]     btn.textContent = "開始填報此頁";
+[Normal]     btn.addEventListener("click", () => runAction("FILL", { taskId: t.id }));
+[Normal]     div.appendChild(btn);
+[Normal]     box.appendChild(div);
+[Normal]   }
+[Normal]   $("status").textContent = "";
+[Normal] }
+[Normal] /** 選目標頁籤：優先當前活動頁（若是官網）；否則找最近訪問的官網頁籤。 */
+[Normal] async function pickTab() {
+[Normal]   const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+[Normal]   if (active && active.url && SITE_RE.test(active.url)) return active;
+[Normal]   const all = await chrome.tabs.query({ currentWindow: true });
+[Normal]   const site = all.filter((t) => t.url && SITE_RE.test(t.url));
+[Normal]   return site[site.length - 1] || active;
+[Normal] }
+[Normal] /** 頁面注入：全幀執行同步小函數並返回各幀結果數組（覆蓋 iframe 表單）。 */
+[Normal] async function inject(tab, func, args = []) {
+[Normal]   // 全幀注入庫（表單可能在 iframe 中）
+[Normal]   try {
+[Normal]     const probe = await chrome.scripting.executeScript({
+[Normal]       target: { tabId: tab.id, allFrames: true },
+[Normal]       func: () => !!(window.__jrpa_sync__ && window.__jrpa_run_v3__),
+[Normal]     });
+[Normal]     const missing = probe.some((r) => !(r && r.result));
+[Normal]     if (missing) {
+[Normal]       await chrome.scripting.executeScript({
+[Normal]         target: { tabId: tab.id, allFrames: true },
+[Normal]         files: ["content.js"],
+[Normal]       });
+[Normal]       await new Promise((r) => setTimeout(r, 400));
+[Normal]     }
+[Normal]   } catch {
+[Normal]     /* 部分幀不可注入（跨域），退回頂層幀 */
+[Normal]   }
+[Normal]   try {
+[Normal]     const out = await chrome.scripting.executeScript({
+[Normal]       target: { tabId: tab.id, allFrames: true },
+[Normal]       func,
+[Normal]       args,
+[Normal]     });
+[Normal]     return (out || []).map((o) => o.result).filter((r) => r != null);
+[Normal]   } catch {
+[Normal]     const out = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func, args });
+[Normal]     return [(out || [])[0] ? out[0].result : null].filter((r) => r != null);
+[Normal]   }
+[Normal] }
+[Normal] /** 頁面右下角面板（同步注入，立刻可見）。 */
+[Normal] function pagePanel(lines) {
+[Normal]   return (lines) => window.__jrpa_sync__.panel("JobsComing RPA", lines);
+[Normal] }
+[Normal] async function bg(type, payload) {
+[Normal]   return chrome.runtime.sendMessage({ type, ...payload });
+[Normal] }
+[Normal] /** 主操作編排：所有後台請求在 popup 完成，頁面只做同步小動作。 */
+[Normal] async function runAction(type, extra) {
+[Normal]   $("status").textContent = "執行中…";
+[Normal]   $("status").className = "";
+[Normal]   try {
+[Normal]     const tab = await pickTab();
+[Normal]     if (!tab || !tab.url || !/^https?:/.test(tab.url)) {
+[Normal]       throw new Error("請先切換到官網頁面（當前是瀏覽器內部頁面）");
+[Normal]     }
+[Normal]     if (type === "SCRAPE") {
+[Normal]       const pageType = $("pageType").value;
+[Normal]       const frames = await inject(
+[Normal]         tab,
+[Normal]         () => window.__jrpa_sync__.collect(),
+[Normal]       );
+[Normal]       const fields = (frames || []).flat();
+[Normal]       const panelArgs = [[{ text: `頁面共識別到 ${fields ? fields.length : 0} 個欄位`, ok: null },
+[Normal]           { text: "正在連線 JobsComing 後台…", ok: null }]];
+[Normal]       await chrome.scripting.executeScript({
+[Normal]         target: { tabId: tab.id },
+[Normal]         func: (ls) => {
+[Normal]           window.__jrpa_sync__.panel("回傳簡歷資料", ls);
+[Normal]           return true;
+[Normal]         },
+[Normal]         args: panelArgs,
+[Normal]       });
+[Normal]       const r = await bg("SCRAPE_SAVE", { site: tab.url ? new URL(tab.url).hostname : "", pageType, fields: fields || [] });
+[Normal]       if (r && r.ok) {
+[Normal]         $("status").textContent = `✅ 已回傳 ${r.out.saved} 個字段到元信息表`;
+[Normal]         $("status").className = "ok";
+[Normal]         await chrome.scripting.executeScript({
+[Normal]           target: { tabId: tab.id },
+[Normal]           func: (n) => {
+[Normal]             window.__jrpa_sync__.panel("回傳簡歷資料", [{ text: `✅ 已回傳 ${n} 個字段到元信息表`, ok: true }]);
+[Normal]             return true;
+[Normal]           },
+[Normal]           args: [r.out.saved],
+[Normal]         });
+[Normal]       } else {
+[Normal]         $("status").textContent = "回傳失敗: " + (r?.error || "");
+[Normal]         $("status").className = "err";
+[Normal]       }
+[Normal]       return;
+[Normal]     }
+[Normal]     if (type === "FILL_RESUME") {
+[Normal]       const pageType = $("pageType").value;
+[Normal]       const r = await bg("RPA_FIELDS", {});
+[Normal]       if (!r || !r.ok) throw new Error("讀取元信息失敗: " + (r?.error || ""));
+[Normal]       // 敏感字段本地解密
+[Normal]       const keyB64 = await getKeyB64();
+[Normal]       let entries = r.fields || [];
+[Normal]       // 拼音聯想：從姓名生成姓/名拼音
+[Normal]       const nameEntry = entries.find((e) => String(e.label || "").split("｜").pop() === "姓名");
+[Normal]       const nameVal = nameEntry ? String(nameEntry.value || "").trim() : "";
+[Normal]       if (nameVal) {
+[Normal]         try {
+[Normal]           const py = await bg("PINYIN", { name: nameVal });
+[Normal]           if (py && py.ok && (py.out.surname_pinyin || py.out.given_pinyin)) {
+[Normal]             entries = entries.concat([
+[Normal]               { label: "姓（拼音）", value: py.out.surname_pinyin, source: "pinyin" },
+[Normal]               { label: "名（拼音）", value: py.out.given_pinyin, source: "pinyin" },
+[Normal]             ]);
+[Normal]           }
+[Normal]         } catch { /* 忽略 */ }
+[Normal]       }
+[Normal]       if (keyB64) {
+[Normal]         entries = await Promise.all(entries.map(async (e) => {
+[Normal]           if (e.encrypted) {
+[Normal]             const pt = await decryptText(keyB64, e.encrypted);
+[Normal]             if (pt != null) return { ...e, value: pt };
+[Normal]           }
+[Normal]           return e;
+[Normal]         }));
+[Normal]       }
+[Normal]       const frames = await inject(
+[Normal]         tab,
+[Normal]         (ents) => window.__jrpa_sync__.fill(ents),
+[Normal]         [entries],
+[Normal]       );
+[Normal]       let filled = 0;
+[Normal]       const skipped = [];
+[Normal]       for (const res of frames || []) {
+[Normal]         filled += res ? res.filled : 0;
+[Normal]         if (res) skipped.push(...(res.skipped || []));
+[Normal]       }
+[Normal]       $("status").textContent =
+[Normal]         `✅ 已填寫 ${filled} 個欄位` +
+[Normal]         (skipped.length ? `｜未匹配 ${skipped.length} 個：${skipped.slice(0, 8).join("、")}…` : "");
+[Normal]       $("status").className = "ok";
+[Normal]       return;
+[Normal]     }
+[Normal]     if (type === "VERIFY") {
+[Normal]       const pageType = $("pageType").value;
+[Normal]       const compareWith = $("compareWith").value;
+[Normal]       const frames = await inject(tab, () => window.__jrpa_sync__.collect());
+[Normal]       const fields = (frames || []).flat();
+[Normal]       const r = await bg("RPA_VERIFY", {
+[Normal]         site: tab.url ? new URL(tab.url).hostname : "",
+[Normal]         pageType,
+[Normal]         compareWith,
+[Normal]         fields: fields || [],
+[Normal]       });
+[Normal]       if (r && r.ok && r.out.ok) {
+[Normal]         $("status").textContent = r.out.summary;
+[Normal]         $("status").className = "ok";
+[Normal]       } else {
+[Normal]         $("status").textContent = "校驗失敗: " + ((r && r.out && r.out.error) || r?.error || "");
+[Normal]         $("status").className = "err";
+[Normal]       }
+[Normal]       return;
+[Normal]     }
+[Normal]     if (type === "FILL") {
+[Normal]       const r = await bg("FILL_PLAN", { taskId: extra.taskId });
+[Normal]       if (!r || !r.ok) throw new Error("獲取填寫方案失敗: " + (r?.error || ""));
+[Normal]       const frames = await inject(
+[Normal]         tab,
+[Normal]         (machine) => window.__jrpa_sync__.fill(machine),
+[Normal]         [r.plan.machine_fields || []],
+[Normal]       );
+[Normal]       let filled = 0;
+[Normal]       const skipped = [];
+[Normal]       for (const res of frames || []) {
+[Normal]         filled += res ? res.filled : 0;
+[Normal]         if (res) skipped.push(...(res.skipped || []));
+[Normal]       }
+[Normal]       let note = `✅ 已填寫 ${filled} 個欄位`;
+[Normal]       if (skipped.length) note += "，未匹配: " + skipped.slice(0, 6).join("、");
+[Normal]       $("status").textContent = note;
+[Normal]       $("status").className = "ok";
+[Normal]       return;
+[Normal]     }
+[Normal]     $("status").textContent = "未知操作";
+[Normal]     $("status").className = "err";
+[Normal]   } catch (e) {
+[Normal]     $("status").textContent = "操作失敗: " + (e?.message || e);
+[Normal]     $("status").className = "err";
+[Normal]   }
+[Normal] }
+[Normal] $("scrape").addEventListener("click", () => runAction("SCRAPE", {}));
+[Normal] $("fillResume").addEventListener("click", () => runAction("FILL_RESUME", {}));
+[Normal] $("verify").addEventListener("click", () => runAction("VERIFY", {}));

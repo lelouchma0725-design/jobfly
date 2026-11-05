@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "backend": "native",
+  "rasterEngine": "libreoffice",
+  "source": "saved",
+  "inputPath": "/Users/harryma/DeepSeekHarness/.work/shot/v05_manual_shots.docx",
+  "sourceSha256": "34b7752521d1922d0683b88cb6a5290e9b28903da13cc971250551159487be2a",
+  "dpi": 90,
+  "pageCount": 10,
+  "images": [
+    {
+      "index": 1,
+      "page": 1,
+      "path": "/Users/harryma/DeepSeekHarness/.work/shot/pv/page-0001.png",
+      "width": 745,
+      "height": 1053,
+      "rectangle": {
+        "x": 0,
+        "y": 0,
+        "width": 793.7333333333333,
+        "height": 1122.5333333333333
+      },
+      "byteLength": 5360
+    },
+    {
+      "index": 2,
+      "page": 2,
+      "path": "/Users/harryma/DeepSeekHarness/.work/shot/pv/page-0002.png",
+      "width": 745,
+      "height": 1053,
+      "rectangle": {
+        "x": 0,
+        "y": 0,
+        "width": 793.7333333333333,
+        "height": 1122.5333333333333
+      },
+      "byteLength": 5360
+    }
+  ],
+  "missingFonts": [
+    "SimSun",
+    "Calibri"
+  ]
+}

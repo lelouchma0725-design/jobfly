@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "backend": "native",
+  "rasterEngine": "libreoffice",
+  "source": "saved",
+  "inputPath": "/Users/harryma/DeepSeekHarness/.tmp_resume/out/manual.docx",
+  "sourceSha256": "746f852bdc9474c3b76eca104642b01a19f9c4a32fc4d8313a9e03d13d788ee4",
+  "dpi": 96,
+  "pageCount": 3,
+  "images": [
+    {
+      "index": 1,
+      "page": 1,
+      "path": "/Users/harryma/DeepSeekHarness/.tmp_resume/pv-manual-new/page-0001.png",
+      "width": 794,
+      "height": 1123,
+      "rectangle": {
+        "x": 0,
+        "y": 0,
+        "width": 793.7333333333333,
+        "height": 1122.5333333333333
+      },
+      "byteLength": 5866
+    }
+  ],
+  "missingFonts": [
+    "宋体"
+  ]
+}

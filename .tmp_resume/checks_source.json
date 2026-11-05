@@ -1,0 +1,36 @@
+{
+  "format": "docx",
+  "verdict": "fail",
+  "checks": [
+    {
+      "id": "package",
+      "status": "pass"
+    },
+    {
+      "id": "contains",
+      "status": "fail",
+      "text": "app/api/tasks.py"
+    }
+  ],
+  "summary": {
+    "paragraphs": 3059,
+    "tables": [],
+    "sections": [
+      {
+        "page_twips": {
+          "w": "11906",
+          "h": "16838"
+        },
+        "margins_twips": {
+          "top": "850",
+          "right": "1020",
+          "bottom": "850",
+          "left": "1020",
+          "header": "720",
+          "footer": "720",
+          "gutter": "0"
+        }
+      }
+    ]
+  }
+}

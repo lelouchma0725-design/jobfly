@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "backend": "native",
+  "rasterEngine": "libreoffice",
+  "source": "saved",
+  "inputPath": "/Users/harryma/DeepSeekHarness/.tmp_resume/out/source.docx",
+  "sourceSha256": "e5dff743ad038ecedf380e791111d669e923b16b0b501a94a1feaf50095eb837",
+  "dpi": 110,
+  "pageCount": 53,
+  "images": [
+    {
+      "index": 1,
+      "page": 1,
+      "path": "/Users/harryma/DeepSeekHarness/.tmp_resume/pv-new/page-0001.png",
+      "width": 910,
+      "height": 1287,
+      "rectangle": {
+        "x": 0,
+        "y": 0,
+        "width": 793.7333333333333,
+        "height": 1122.5333333333333
+      },
+      "byteLength": 7028
+    },
+    {
+      "index": 2,
+      "page": 2,
+      "path": "/Users/harryma/DeepSeekHarness/.tmp_resume/pv-new/page-0002.png",
+      "width": 910,
+      "height": 1287,
+      "rectangle": {
+        "x": 0,
+        "y": 0,
+        "width": 793.7333333333333,
+        "height": 1122.5333333333333
+      },
+      "byteLength": 7028
+    }
+  ],
+  "missingFonts": [
+    "宋体"
+  ]
+}

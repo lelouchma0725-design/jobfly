@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "backend": "native",
+  "rasterEngine": "libreoffice",
+  "source": "saved",
+  "inputPath": "/Users/harryma/Downloads/求职简历智能匹配投递系统V1.0-软著材料/基于大数据分析的求职简历智能匹配投递系统V1.0_用户手册.docx",
+  "sourceSha256": "3750c5b3390ee344111afa19e438a309206b8414dec37258f791235c6e49a541",
+  "dpi": 110,
+  "pageCount": 3,
+  "images": [
+    {
+      "index": 1,
+      "page": 1,
+      "path": "/Users/harryma/DeepSeekHarness/.tmp_resume/pv-manual/page-0001.png",
+      "width": 910,
+      "height": 1287,
+      "rectangle": {
+        "x": 0,
+        "y": 0,
+        "width": 793.7333333333333,
+        "height": 1122.5333333333333
+      },
+      "byteLength": 7028
+    }
+  ],
+  "missingFonts": [
+    "宋体"
+  ]
+}

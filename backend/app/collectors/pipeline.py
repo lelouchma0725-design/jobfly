@@ -186,9 +186,15 @@ def store_postings(db: Session, postings: list[base.JobPosting],
 
 
 def _mark_stale(db: Session, postings: list[base.JobPosting]) -> None:
-    """本次採集未出現、且超過 STALE_AFTER_DAYS 未見的崗位標記下架。"""
+    """本次採集未出現、且超過 STALE_AFTER_DAYS 未見的崗位標記下架。
+
+    僅對完整清單型來源生效；分頁受限來源（如 iguopin 國聘）單次採集非全量，
+    不能據此判定崗位過期。
+    """
     cutoff = datetime.now(timezone.utc) - timedelta(days=STALE_AFTER_DAYS)
     for source in {p.source for p in postings}:
+        if source not in FULL_INVENTORY_SOURCES:
+            continue
         for company in {p.company_name for p in postings if p.source == source}:
             db.execute(
                 text(
