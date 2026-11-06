@@ -136,9 +136,9 @@ class IguopinCollector:
                             **it,
                         },
                     ))
-                time.sleep(5.0)  # 頁間節流（實測 5 秒間隔深頁全部可用）
-                if page % 10 == 0:
-                    time.sleep(30)  # 每 10 頁長冷卻
+                time.sleep(8.0)  # 頁間節流（實測 8 秒間隔可完整翻完 39 頁）
+                if page % 5 == 0:
+                    time.sleep(90)  # 每 5 頁長冷卻（實測可行）
                 if len(items) < 20:
                     break
         finally:
