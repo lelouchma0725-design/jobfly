@@ -87,15 +87,14 @@ export default function Jobs() {
       })
       .catch(() => {});
   }, []);
+  // 採集狀態：掛載時只查一次（不自動輪詢，避免頁面反覆 loading）
   useEffect(() => {
-    void load();
-    // 返回頁面時恢復採集狀態：完成過 → 綠色提示；進行中 → 自動繼續輪詢
     api<{ running: boolean; finished_at: string | null; report: Record<string, number> | null }>(
       "/api/jobs/collect-status",
     )
       .then((st) => {
         if (st.running) {
-          pollCollect(0);
+          setMsg("採集正在後台進行中，可稍後點「刷新」查看最新崗位");
         } else if (st.finished_at && st.report) {
           const rp = st.report;
           setCollectOk(true);
@@ -105,6 +104,9 @@ export default function Jobs() {
         }
       })
       .catch(() => {});
+  }, []);
+  useEffect(() => {
+    void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [limit, offset, applied]);
 
@@ -147,7 +149,7 @@ export default function Jobs() {
       } catch {
         setBusy(false);
       }
-    }, 8000);
+    }, 15000);
   }
 
   const [collectOk, setCollectOk] = useState(false);

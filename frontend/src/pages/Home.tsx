@@ -1,59 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { useT } from "../lib/i18n";
-import { getKeyB64, setKeyB64, unwrapKeyWithCode } from "../lib/crypto";
-import { emitUnlockChange, gateEnabled, isUnlocked, refreshGate, setUnlocked } from "../lib/unlock";
 
 type Msg = { role: "user" | "assistant"; content: string };
 type Conv = { id: string; title: string; updated_at: string; messages_count: number };
 
 export default function Home() {
   const { t } = useT();
-  const [locked, setLocked] = useState(gateEnabled() && !isUnlocked());
-  useEffect(() => {
-    void refreshGate().then((has) => {
-      if (has && !isUnlocked()) setLocked(true);
-    });
-  }, []);
-  const [keyInput, setKeyInput] = useState("");
-  const [unlockMsg, setUnlockMsg] = useState("");
-
-  async function doUnlock() {
-    const k = keyInput.trim();
-    if (!k) return setUnlockMsg("請輸入安全密鑰");
-    try {
-      const r = await api<{ wrapped_key: string | null }>("/api/me/e2ee/unlock-wrapped");
-      if (!r.wrapped_key) return setUnlockMsg("尚未設置安全密鑰，請先到「我的資料→個人信息→安全」生成");
-      const e2ee = await unwrapKeyWithCode(r.wrapped_key, k);
-      setKeyB64(e2ee);
-      setUnlocked(true);
-      emitUnlockChange();
-      setLocked(false);
-    } catch {
-      setUnlockMsg("安全密鑰不正確");
-    }
-  }
-
-  if (locked) {
-    return (
-      <main>
-        <div className="card" style={{ maxWidth: 520, margin: "60px auto" }}>
-          <h2>🔐 第二層解鎖</h2>
-          <p className="muted">
-            郵箱密碼登錄只能訪問基礎信息（簡歷文件、崗位庫等）。AI 求職管家、AI 畫像、我的匹配與投遞等核心功能需要安全密鑰解鎖。
-          </p>
-          <input
-            placeholder="輸入安全密鑰（生成時只顯示一次的那串字符）"
-            value={keyInput}
-            onChange={(e) => setKeyInput(e.target.value)}
-          />
-          <button onClick={() => void doUnlock()}>解鎖核心功能</button>
-          {unlockMsg && <p className="notice">{unlockMsg}</p>}
-          <p className="muted">沒有安全密鑰？到「我的資料 → 個人信息 → 🔐 安全」生成。</p>
-        </div>
-      </main>
-    );
-  }
   const [messages, setMessages] = useState<Msg[]>([{ role: "assistant", content: t("welcome") }]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
