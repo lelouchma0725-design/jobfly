@@ -52,7 +52,6 @@ export async function decryptText(keyB64: string, data: string): Promise<string 
 export const SENSITIVE_RE =
   /證件|证件|身份證|身份证|護照|护照|家庭|親屬|亲属|緊急聯繫|紧急联系|證件號|证件号|地址|邮编|郵編|電話|电话|手機|手机|姓名拼音|父|母/;
 
-/** 生成密鑰恢復碼（32 字符，僅顯示一次）。 */
 export function generateRecoveryCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   const arr = crypto.getRandomValues(new Uint8Array(32));
@@ -87,4 +86,9 @@ export async function unwrapKeyWithCode(wrapped: string, code: string): Promise<
     _unb64(ctB64),
   );
   return new TextDecoder().decode(pt);
+}
+
+/** 生成安全密鑰（32 字符，僅顯示一次）。 */
+export function generateSecretKey(): string {
+  return generateRecoveryCode();
 }

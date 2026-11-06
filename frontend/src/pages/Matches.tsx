@@ -177,6 +177,14 @@ export default function Matches() {
               ))}
             </datalist>
             <button onClick={runSearch}>查詢</button>
+            {applied.source || applied.company ? (
+              <span className="notice" style={{ margin: 0 }}>
+                共 {total} 條結果（{applied.company ? `公司:${applied.company} ` : ""}
+                {applied.source ? `來源:${sources.find((s) => s.code === applied.source)?.label ?? applied.source}` : ""}）
+              </span>
+            ) : (
+              <span className="muted" style={{ margin: 0 }}>共 {total} 條匹配</span>
+            )}
             <select
               value={campus}
               onChange={(e) => {

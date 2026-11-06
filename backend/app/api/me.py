@@ -301,3 +301,43 @@ def put_wrapped_key(user: CurrentUser, db: DB, payload: WrappedKeyRequest) -> di
     )
     db.commit()
     return {"ok": True}
+
+class UnlockWrappedRequest(BaseModel):
+    wrapped_key: str
+
+
+@router.get("/me/e2ee/unlock-status")
+def unlock_status(user: CurrentUser, db: DB) -> dict:
+    """兩層密鑰：查詢安全密鑰是否已設置（服務器只知有無，不知密鑰本身）。"""
+    row = db.execute(
+        text("SELECT e2ee_unlock_wrapped FROM user_settings WHERE user_id=:u"),
+        {"u": user["id"]},
+    ).mappings().first()
+    return {"has_unlock_key": bool((row["e2ee_unlock_wrapped"] if row else None))}
+
+
+@router.put("/me/e2ee/unlock-wrapped")
+def put_unlock_wrapped(user: CurrentUser, db: DB, payload: UnlockWrappedRequest) -> dict:
+    """保存安全密鑰包裝的 E2EE 密鑰（首次生成/重新生成安全密鑰時上傳）。"""
+    wk = str(payload.wrapped_key or "").strip()[:4000]
+    if not wk:
+        raise HTTPException(422, "wrapped_key 不可為空")
+    db.execute(
+        text(
+            "INSERT INTO user_settings (user_id, e2ee_unlock_wrapped) VALUES (:u, :w) "
+            "ON CONFLICT (user_id) DO UPDATE SET e2ee_unlock_wrapped=:w, updated_at=now()"
+        ),
+        {"u": user["id"], "w": wk},
+    )
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/me/e2ee/unlock-wrapped")
+def get_unlock_wrapped(user: CurrentUser, db: DB) -> dict:
+    """取安全密鑰包裝的 E2EE 密鑰（供解鎖/重新生成流程使用）。"""
+    row = db.execute(
+        text("SELECT e2ee_unlock_wrapped FROM user_settings WHERE user_id=:u"),
+        {"u": user["id"]},
+    ).mappings().first()
+    return {"wrapped_key": (row["e2ee_unlock_wrapped"] if row else None) or None}

@@ -216,6 +216,15 @@ export default function Jobs() {
               ))}
             </datalist>
             <button onClick={runSearch}>{t("search")}</button>
+            {applied.source || applied.company || applied.q ? (
+              <span className="notice" style={{ margin: 0 }}>
+                共 {total} 條結果（{applied.q ? `關鍵詞:${applied.q} ` : ""}
+                {applied.company ? `公司:${applied.company} ` : ""}
+                {applied.source ? `來源:${sources.find((s) => s.code === applied.source)?.label ?? applied.source}` : ""}）
+              </span>
+            ) : (
+              <span className="muted" style={{ margin: 0 }}>共 {total} 條崗位（全部來源）</span>
+            )}
             <select
               value={campus}
               onChange={(e) => setCampus(e.target.value)}
