@@ -28,6 +28,7 @@ _ATS_HINTS = (
     ("iguopin", ("iguopin.com", "gp-api.iguopin.com")),
     ("moka", ("mokahr.com", "app.mokahr.com")),
     ("job51", ("51job.com", "we.51job.com")),
+    ("zhaopin", ("zhaopin.com", "sou.zhaopin.com")),
 )
 
 GENERIC_LINK_LIMIT = 10  # 通用採集每站最多抓取詳情數
