@@ -41,6 +41,7 @@ def list_jobs(
     only_active = "true" if only_active == "true" else None
     q = t2s(q) or None
     company = t2s(company) or None
+    source = resolve_source(source)
     limit = min(max(limit, 1), 200)
     rows = db.execute(
         text(
