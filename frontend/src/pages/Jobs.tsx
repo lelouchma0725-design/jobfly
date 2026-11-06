@@ -39,6 +39,7 @@ export default function Jobs() {
   const [company, setCompany] = useState("");
   const [campus, setCampus] = useState("");
   const [sourceText, setSourceText] = useState("");
+  const [appliedSource, setAppliedSource] = useState("");
   const [sources, setSources] = useState<{ code: string; label: string }[]>([]);
   const [org, setOrg] = useState("");
   const [detail, setDetail] = useState<JobDetail | null>(null);
@@ -61,8 +62,7 @@ export default function Jobs() {
     if (q) params.set("q", q);
     if (company) params.set("company", company);
     if (campus) params.set("job_type", campus);
-    const srcCode = sources.find((s) => s.label === sourceText)?.code ?? "";
-    if (srcCode) params.set("source", srcCode);
+    if (appliedSource) params.set("source", appliedSource);
     if (org) params.set("org", org);
     try {
       const res = await api<{ items: Job[]; total: number }>(`/api/jobs?${params}`);
@@ -100,6 +100,22 @@ export default function Jobs() {
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [limit, offset]);
+
+  function resolveSource(text: string): string {
+    const t = text.trim();
+    if (!t) return "";
+    const hit =
+      sources.find((s) => s.label === t) ??
+      sources.find((s) => s.code === t) ??
+      sources.find((s) => s.label.includes(t));
+    return hit ? hit.code : "";
+  }
+
+  function runSearch() {
+    setAppliedSource(resolveSource(sourceText));
+    setOffset(0);
+    void load();
+  }
 
   function pollCollect(tries: number) {
     if (tries > 60) {
@@ -169,9 +185,19 @@ export default function Jobs() {
         <div className="card wide">
           <h2>{t("jobBoard")}</h2>
           <div className="row wrap">
-            <input placeholder="搜索職位關鍵詞（點搜索查詢）" value={q} onChange={(e) => setQ(e.target.value)} />
-            <input placeholder="公司名" value={company} onChange={(e) => setCompany(e.target.value)} />
-            <button onClick={() => { setOffset(0); void load(); }}>{t("search")}</button>
+            <input
+              placeholder="搜索職位關鍵詞"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && runSearch()}
+            />
+            <input
+              placeholder="公司名（與來源聯合查詢）"
+              value={company}
+              onChange={(e) => setCompany(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && runSearch()}
+            />
+            <button onClick={runSearch}>{t("search")}</button>
             <select
               value={campus}
               onChange={(e) => setCampus(e.target.value)}
@@ -183,9 +209,10 @@ export default function Jobs() {
             </select>
             <input
               list="job-src-list"
-              placeholder="來源：全部（可輸入如：國聘）"
+              placeholder="來源：全部（可輸入如：國聘/智聯）"
               value={sourceText}
               onChange={(e) => setSourceText(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && runSearch()}
               style={{ width: 190 }}
             />
             <datalist id="job-src-list">

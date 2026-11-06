@@ -55,6 +55,7 @@ export default function Matches() {
   const [status, setStatus] = useState("");
   const [campus, setCampus] = useState("");
   const [sourceText, setSourceText] = useState("");
+  const [appliedSource, setAppliedSource] = useState("");
   const [sources, setSources] = useState<{ code: string; label: string }[]>([]);
   const [org, setOrg] = useState("");
   const [companyInput, setCompanyInput] = useState("");
@@ -81,12 +82,21 @@ export default function Matches() {
   const [limit, setLimit] = useState(20);
   const [offset, setOffset] = useState(0);
 
+  function resolveSource(text: string): string {
+    const t = text.trim();
+    if (!t) return "";
+    const hit =
+      sources.find((s) => s.label === t) ??
+      sources.find((s) => s.code === t) ??
+      sources.find((s) => s.label.includes(t));
+    return hit ? hit.code : "";
+  }
+
   async function load() {
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     if (status) params.set("status", status);
     if (campus) params.set("job_type", campus);
-    const srcCode = sources.find((s) => s.label === sourceText)?.code ?? "";
-    if (srcCode) params.set("source", srcCode);
+    if (appliedSource) params.set("source", appliedSource);
     if (org) params.set("org", org);
     if (company) params.set("company", company);
     try {
@@ -151,6 +161,7 @@ export default function Matches() {
             <button
               onClick={() => {
                 setCompany(companyInput);
+                setAppliedSource(resolveSource(sourceText));
                 setOffset(0);
               }}
             >
@@ -170,9 +181,16 @@ export default function Matches() {
             </select>
             <input
               list="match-src-list"
-              placeholder="來源：全部（可輸入如：國聘）"
+              placeholder="來源：全部（可輸入如：國聘/智聯）"
               value={sourceText}
               onChange={(e) => setSourceText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  setCompany(companyInput);
+                  setAppliedSource(resolveSource(sourceText));
+                  setOffset(0);
+                }
+              }}
               style={{ width: 190 }}
             />
             <datalist id="match-src-list">
