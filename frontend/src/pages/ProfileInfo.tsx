@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useT } from "../lib/i18n";
-import { decryptText, deriveKeyB64, encryptText, generateRecoveryCode, getKeyB64, setKeyB64, unwrapKeyWithCode, wrapKeyWithCode } from "../lib/crypto";
+import { decryptText, deriveKeyB64, encryptText, getKeyB64, setKeyB64 } from "../lib/crypto";
 
 type InfoField = { key: string; value: string; source: string; updated_at: string; sensitive?: boolean; encrypted?: string | null };
 type Full = {
@@ -185,52 +185,6 @@ export default function ProfileInfo() {
     input.click();
   }
 
-  async function setupRecoveryCode() {
-    const key = getKeyB64();
-    if (!key) return setMsg("當前無密鑰（請用密碼登錄後再生成恢復碼）");
-    const code = generateRecoveryCode();
-    try {
-      const wrapped = await wrapKeyWithCode(key, code);
-      await api("/api/me/e2ee/wrapped-key", { method: "PUT", body: JSON.stringify({ wrapped_key: wrapped }) });
-      setMsg(`✅ 恢復碼已生成（只顯示一次，請立即抄錄保存）：${code}`);
-    } catch (e) {
-      setMsg(`生成失敗: ${(e as Error).message}`);
-    }
-  }
-
-  async function recoverWithCode() {
-    const code = prompt("請輸入密鑰恢復碼（生成時抄錄的那串字符）");
-    if (!code) return;
-    try {
-      const r = await api<{ wrapped_key: string | null }>("/api/me/e2ee/wrapped-key");
-      if (!r.wrapped_key) return setMsg("服務器上沒有包裝密鑰，請先在原設備生成恢復碼");
-      const oldKey = await unwrapKeyWithCode(r.wrapped_key, code);
-      // 用恢復的密鑰解密全部敏感字段，再用當前設備密鑰（如有）或舊密鑰續用
-      const currentKey = getKeyB64();
-      setKeyB64(oldKey);
-      if (currentKey && currentKey !== oldKey) {
-        // 當前設備已有密鑰：把恢復的密文遷移到當前密鑰
-        const fields = [];
-        for (const f of data?.info_fields ?? []) {
-          if (f.encrypted) {
-            const pt = await decryptText(oldKey, f.encrypted);
-            if (pt != null) fields.push({ key: f.key, sensitive_enc: await encryptText(currentKey, pt) });
-          }
-        }
-        if (fields.length) {
-          await api("/api/me/info-fields/import", { method: "PUT", body: JSON.stringify({ fields }) });
-        }
-        setKeyB64(currentKey);
-        setMsg("✅ 已用恢復碼遷移敏感字段密文到當前設備密鑰");
-      } else {
-        setMsg("✅ 已用恢復碼恢復密鑰（敏感字段可正常解密顯示）");
-      }
-      await load();
-    } catch (e) {
-      setMsg(`恢復失敗（恢復碼不正確？）: ${(e as Error).message}`);
-    }
-  }
-
   async function delField(key: string) {
     await api(`/api/me/info-fields/${encodeURIComponent(key)}`, { method: "DELETE" });
     await load();
@@ -266,12 +220,6 @@ export default function ProfileInfo() {
             </button>
             <button className="ghost" onClick={() => void importBackup()}>
               導入密文備份
-            </button>
-            <button className="ghost" onClick={() => void setupRecoveryCode()}>
-              生成密鑰恢復碼（多設備/改密碼用）
-            </button>
-            <button className="ghost" onClick={() => void recoverWithCode()}>
-              用恢復碼在此設備恢復
             </button>
           </div>
 
