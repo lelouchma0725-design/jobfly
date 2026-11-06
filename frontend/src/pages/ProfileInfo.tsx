@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useT } from "../lib/i18n";
-import { decryptText, deriveKeyB64, encryptText, generateRecoveryCode, generateSecretKey, getKeyB64, setKeyB64, unwrapKeyWithCode, wrapKeyWithCode } from "../lib/crypto";
-import { emitUnlockChange, setGateEnabled, setUnlocked } from "../lib/unlock";
+import { decryptText, deriveKeyB64, encryptText, generateRecoveryCode, getKeyB64, setKeyB64, unwrapKeyWithCode, wrapKeyWithCode } from "../lib/crypto";
 
 type InfoField = { key: string; value: string; source: string; updated_at: string; sensitive?: boolean; encrypted?: string | null };
 type Full = {
@@ -186,22 +185,6 @@ export default function ProfileInfo() {
     input.click();
   }
 
-  async function setupSecretKey() {
-    const key = getKeyB64();
-    if (!key) return setMsg("當前無密鑰（請用密碼登錄後再生成安全密鑰）");
-    const code = generateSecretKey();
-    try {
-      const wrapped = await wrapKeyWithCode(key, code);
-      await api("/api/me/e2ee/unlock-wrapped", { method: "PUT", body: JSON.stringify({ wrapped_key: wrapped }) });
-      setUnlocked(true);
-      setGateEnabled(true);
-      emitUnlockChange();
-      setMsg(`✅ 安全密鑰已生成（只顯示一次，請立即抄錄保存）：${code}`);
-    } catch (e) {
-      setMsg(`生成失敗: ${(e as Error).message}`);
-    }
-  }
-
   async function setupRecoveryCode() {
     const key = getKeyB64();
     if (!key) return setMsg("當前無密鑰（請用密碼登錄後再生成恢復碼）");
@@ -283,9 +266,6 @@ export default function ProfileInfo() {
             </button>
             <button className="ghost" onClick={() => void importBackup()}>
               導入密文備份
-            </button>
-            <button className="ghost" onClick={() => void setupSecretKey()}>
-              生成安全密鑰（解鎖核心功能，只顯示一次）
             </button>
             <button className="ghost" onClick={() => void setupRecoveryCode()}>
               生成密鑰恢復碼（多設備/改密碼用）

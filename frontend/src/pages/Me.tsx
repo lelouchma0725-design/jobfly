@@ -8,8 +8,6 @@ import Accounts from "./Accounts";
 import Companies from "./Companies";
 import Settings from "./Settings";
 import MatchJobs from "./MatchJobs";
-import { getKeyB64, setKeyB64, unwrapKeyWithCode } from "../lib/crypto";
-import { emitUnlockChange, gateEnabled, isUnlocked, refreshGate, setUnlocked } from "../lib/unlock";
 import Matches from "./Matches";
 import Applications from "./Applications";
 import Tasks from "./Tasks";
@@ -52,50 +50,6 @@ export default function Me() {
   }
 
   const Current = TABS.find((x) => x[0] === tab)?.[2] ?? Profile;
-  const GATED_TABS = new Set(["profile", "matchjobs", "applications", "tasks"]);
-  const [unlocked, setUnlockedState] = useState(isUnlocked());
-  const [gateOn, setGateOn] = useState(gateEnabled());
-  useEffect(() => {
-    void refreshGate().then((has) => setGateOn(has));
-  }, []);
-  const [keyInput, setKeyInput] = useState("");
-  const [gateMsg, setGateMsg] = useState("");
-
-  async function doUnlockHere() {
-    const k = keyInput.trim();
-    if (!k) return setGateMsg("請輸入安全密鑰");
-    try {
-      const r = await api<{ wrapped_key: string | null }>("/api/me/e2ee/unlock-wrapped");
-      if (!r.wrapped_key) return setGateMsg("尚未設置安全密鑰，請先到「個人信息→安全」生成");
-      const e2ee = await unwrapKeyWithCode(r.wrapped_key, k);
-      setKeyB64(e2ee);
-      setUnlocked(true);
-      emitUnlockChange();
-      setUnlockedState(true);
-    } catch {
-      setGateMsg("安全密鑰不正確");
-    }
-  }
-
-  if (GATED_TABS.has(tab) && gateOn && !unlocked) {
-    return (
-      <main>
-        <div className="card" style={{ maxWidth: 520, margin: "60px auto" }}>
-          <h2>🔐 核心功能需要安全密鑰解鎖</h2>
-          <p className="muted">
-            本頁內容（AI 畫像/匹配結果/投遞記錄）屬於第二層核心數據，請輸入安全密鑰解鎖後查看。
-          </p>
-          <input
-            placeholder="輸入安全密鑰"
-            value={keyInput}
-            onChange={(e) => setKeyInput(e.target.value)}
-          />
-          <button onClick={() => void doUnlockHere()}>解鎖</button>
-          {gateMsg && <p className="notice">{gateMsg}</p>}
-        </div>
-      </main>
-    );
-  }
 
   return (
     <div className="me-page">
