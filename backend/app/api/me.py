@@ -276,7 +276,7 @@ class WrappedKeyRequest(BaseModel):
     wrapped_key: str
 
 
-@router.get("/e2ee/wrapped-key")
+@router.get("/me/e2ee/wrapped-key")
 def get_wrapped_key(user: CurrentUser, db: DB) -> dict:
     """取密鑰恢復碼包裝密鑰（配合用戶持有的恢復碼解出 E2EE 密鑰）。"""
     row = db.execute(
@@ -286,7 +286,7 @@ def get_wrapped_key(user: CurrentUser, db: DB) -> dict:
     return {"wrapped_key": (row["e2ee_wrapped_key"] if row else None) or None}
 
 
-@router.put("/e2ee/wrapped-key")
+@router.put("/me/e2ee/wrapped-key")
 def put_wrapped_key(user: CurrentUser, db: DB, payload: WrappedKeyRequest) -> dict:
     """保存/更新密鑰恢復碼包裝密鑰。"""
     wk = str(payload.wrapped_key or "").strip()[:4000]
