@@ -2,14 +2,19 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { useT } from "../lib/i18n";
 import { getKeyB64, setKeyB64, unwrapKeyWithCode } from "../lib/crypto";
-import { emitUnlockChange, isUnlocked, setUnlocked } from "../lib/unlock";
+import { emitUnlockChange, gateEnabled, isUnlocked, refreshGate, setUnlocked } from "../lib/unlock";
 
 type Msg = { role: "user" | "assistant"; content: string };
 type Conv = { id: string; title: string; updated_at: string; messages_count: number };
 
 export default function Home() {
   const { t } = useT();
-  const [locked, setLocked] = useState(!isUnlocked());
+  const [locked, setLocked] = useState(gateEnabled() && !isUnlocked());
+  useEffect(() => {
+    void refreshGate().then((has) => {
+      if (has && !isUnlocked()) setLocked(true);
+    });
+  }, []);
   const [keyInput, setKeyInput] = useState("");
   const [unlockMsg, setUnlockMsg] = useState("");
 

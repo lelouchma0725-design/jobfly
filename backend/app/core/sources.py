@@ -26,3 +26,18 @@ SOURCE_LABELS: dict[str, str] = {
 
 def source_label(code: str | None) -> str:
     return SOURCE_LABELS.get(code or "", code or "未知")
+
+def resolve_source(text: str | None) -> str | None:
+    """來源參數解析：支持代碼（iguopin）、完整標籤（國聘）、模糊標籤（智聯→智聯招聘）。"""
+    t = (text or "").strip()
+    if not t:
+        return None
+    if t in SOURCE_LABELS:
+        return t
+    for code, label in SOURCE_LABELS.items():
+        if label == t:
+            return code
+    for code, label in SOURCE_LABELS.items():
+        if t in label:
+            return code
+    return t  # 未知值原樣傳回（後端 WHERE 不命中自然為空）

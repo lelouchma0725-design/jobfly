@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
-from app.core.sources import source_label
+from app.core.sources import resolve_source, source_label
 from app.core.textutil import t2s
 from app.core.jsonutil import j
 from app.db import get_db

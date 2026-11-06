@@ -206,6 +206,7 @@ def list_matches(
 ) -> dict:
     company_orig = company
     company = t2s(company) or None
+    source = resolve_source(source)
     limit = min(max(limit, 1), 100)
     rows = db.execute(
         text(

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useT } from "../lib/i18n";
 import { decryptText, deriveKeyB64, encryptText, generateRecoveryCode, generateSecretKey, getKeyB64, setKeyB64, unwrapKeyWithCode, wrapKeyWithCode } from "../lib/crypto";
-import { emitUnlockChange, setUnlocked } from "../lib/unlock";
+import { emitUnlockChange, setGateEnabled, setUnlocked } from "../lib/unlock";
 
 type InfoField = { key: string; value: string; source: string; updated_at: string; sensitive?: boolean; encrypted?: string | null };
 type Full = {
@@ -194,6 +194,7 @@ export default function ProfileInfo() {
       const wrapped = await wrapKeyWithCode(key, code);
       await api("/api/me/e2ee/unlock-wrapped", { method: "PUT", body: JSON.stringify({ wrapped_key: wrapped }) });
       setUnlocked(true);
+      setGateEnabled(true);
       emitUnlockChange();
       setMsg(`✅ 安全密鑰已生成（只顯示一次，請立即抄錄保存）：${code}`);
     } catch (e) {

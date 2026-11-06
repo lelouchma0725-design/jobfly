@@ -9,7 +9,7 @@ import Companies from "./Companies";
 import Settings from "./Settings";
 import MatchJobs from "./MatchJobs";
 import { getKeyB64, setKeyB64, unwrapKeyWithCode } from "../lib/crypto";
-import { emitUnlockChange, isUnlocked, setUnlocked } from "../lib/unlock";
+import { emitUnlockChange, gateEnabled, isUnlocked, refreshGate, setUnlocked } from "../lib/unlock";
 import Matches from "./Matches";
 import Applications from "./Applications";
 import Tasks from "./Tasks";
@@ -54,6 +54,10 @@ export default function Me() {
   const Current = TABS.find((x) => x[0] === tab)?.[2] ?? Profile;
   const GATED_TABS = new Set(["profile", "matchjobs", "applications", "tasks"]);
   const [unlocked, setUnlockedState] = useState(isUnlocked());
+  const [gateOn, setGateOn] = useState(gateEnabled());
+  useEffect(() => {
+    void refreshGate().then((has) => setGateOn(has));
+  }, []);
   const [keyInput, setKeyInput] = useState("");
   const [gateMsg, setGateMsg] = useState("");
 
@@ -73,7 +77,7 @@ export default function Me() {
     }
   }
 
-  if (GATED_TABS.has(tab) && !unlocked) {
+  if (GATED_TABS.has(tab) && gateOn && !unlocked) {
     return (
       <main>
         <div className="card" style={{ maxWidth: 520, margin: "60px auto" }}>
