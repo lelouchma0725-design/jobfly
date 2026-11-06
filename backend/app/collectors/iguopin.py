@@ -90,9 +90,9 @@ class IguopinCollector:
                     continue
                 if not items:
                     consecutive_empty += 1
-                    if consecutive_empty >= 3:
-                        break  # 連續 3 個空頁（可能是限流 → 前面已重試），停止
-                    time.sleep(3.0)  # 冷卻後繼續下一頁
+                    if consecutive_empty >= 5:
+                        break  # 連續 5 個空頁才停（偶發空響應容忍）
+                    time.sleep(6.0)  # 冷卻後繼續下一頁
                     continue
                 consecutive_empty = 0
                 for it in items:
@@ -136,9 +136,9 @@ class IguopinCollector:
                             **it,
                         },
                     ))
-                time.sleep(2.5)  # 頁間節流（防限流）
+                time.sleep(5.0)  # 頁間節流（實測 5 秒間隔深頁全部可用）
                 if page % 10 == 0:
-                    time.sleep(20)  # 每 10 頁長冷卻
+                    time.sleep(30)  # 每 10 頁長冷卻
                 if len(items) < 20:
                     break
         finally:
