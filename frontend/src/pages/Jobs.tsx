@@ -39,7 +39,11 @@ export default function Jobs() {
   const [company, setCompany] = useState("");
   const [campus, setCampus] = useState("");
   const [sourceText, setSourceText] = useState("");
-  const [appliedSource, setAppliedSource] = useState("");
+  const [applied, setApplied] = useState<{ q: string; company: string; source: string }>({
+    q: "",
+    company: "",
+    source: "",
+  });
   const [sources, setSources] = useState<{ code: string; label: string }[]>([]);
   const [org, setOrg] = useState("");
   const [detail, setDetail] = useState<JobDetail | null>(null);
@@ -57,12 +61,15 @@ export default function Jobs() {
     }
   }
 
-  async function load() {
+  async function load(paramsOverride?: { q?: string; company?: string; source?: string }) {
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-    if (q) params.set("q", q);
-    if (company) params.set("company", company);
+    const effQ = paramsOverride && paramsOverride.q !== undefined ? paramsOverride.q : applied.q;
+    const effCompany = paramsOverride && paramsOverride.company !== undefined ? paramsOverride.company : applied.company;
+    const effSource = paramsOverride && paramsOverride.source !== undefined ? paramsOverride.source : applied.source;
+    if (effQ) params.set("q", effQ);
+    if (effCompany) params.set("company", effCompany);
     if (campus) params.set("job_type", campus);
-    if (appliedSource) params.set("source", appliedSource);
+    if (effSource) params.set("source", effSource);
     if (org) params.set("org", org);
     try {
       const res = await api<{ items: Job[]; total: number }>(`/api/jobs?${params}`);
@@ -99,7 +106,7 @@ export default function Jobs() {
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [limit, offset]);
+  }, [limit, offset, applied]);
 
   function resolveSource(text: string): string {
     const t = text.trim();
@@ -112,9 +119,10 @@ export default function Jobs() {
   }
 
   function runSearch() {
-    setAppliedSource(resolveSource(sourceText));
+    const next = { q, company, source: resolveSource(sourceText) };
+    setApplied(next);
     setOffset(0);
-    void load();
+    void load(next); // 顯式傳參，避免 setState 異步導致舊值查詢
   }
 
   function pollCollect(tries: number) {
@@ -189,14 +197,24 @@ export default function Jobs() {
               placeholder="搜索職位關鍵詞"
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && runSearch()}
             />
             <input
-              placeholder="公司名（與來源聯合查詢）"
+              placeholder="公司名"
               value={company}
               onChange={(e) => setCompany(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && runSearch()}
             />
+            <input
+              list="job-src-list"
+              placeholder="來源：全部（可輸入如：國聘/智聯）"
+              value={sourceText}
+              onChange={(e) => setSourceText(e.target.value)}
+              style={{ width: 180 }}
+            />
+            <datalist id="job-src-list">
+              {sources.map((s) => (
+                <option key={s.code} value={s.label} />
+              ))}
+            </datalist>
             <button onClick={runSearch}>{t("search")}</button>
             <select
               value={campus}
@@ -207,19 +225,6 @@ export default function Jobs() {
               <option value="society">僅社招</option>
               <option value="intern">僅實習</option>
             </select>
-            <input
-              list="job-src-list"
-              placeholder="來源：全部（可輸入如：國聘/智聯）"
-              value={sourceText}
-              onChange={(e) => setSourceText(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && runSearch()}
-              style={{ width: 190 }}
-            />
-            <datalist id="job-src-list">
-              {sources.map((s) => (
-                <option key={s.code} value={s.label} />
-              ))}
-            </datalist>
             <select
               value={org}
               onChange={(e) => setOrg(e.target.value)}

@@ -55,7 +55,10 @@ export default function Matches() {
   const [status, setStatus] = useState("");
   const [campus, setCampus] = useState("");
   const [sourceText, setSourceText] = useState("");
-  const [appliedSource, setAppliedSource] = useState("");
+  const [applied, setApplied] = useState<{ company: string; source: string }>({
+    company: "",
+    source: "",
+  });
   const [sources, setSources] = useState<{ code: string; label: string }[]>([]);
   const [org, setOrg] = useState("");
   const [companyInput, setCompanyInput] = useState("");
@@ -82,6 +85,13 @@ export default function Matches() {
   const [limit, setLimit] = useState(20);
   const [offset, setOffset] = useState(0);
 
+  function runSearch() {
+    const next = { company: companyInput, source: resolveSource(sourceText) };
+    setApplied(next);
+    setOffset(0);
+    void load(next);
+  }
+
   function resolveSource(text: string): string {
     const t = text.trim();
     if (!t) return "";
@@ -92,13 +102,15 @@ export default function Matches() {
     return hit ? hit.code : "";
   }
 
-  async function load() {
+  async function load(paramsOverride?: { company?: string; source?: string }) {
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    const effCompany = paramsOverride && paramsOverride.company !== undefined ? paramsOverride.company : applied.company;
+    const effSource = paramsOverride && paramsOverride.source !== undefined ? paramsOverride.source : applied.source;
     if (status) params.set("status", status);
     if (campus) params.set("job_type", campus);
-    if (appliedSource) params.set("source", appliedSource);
+    if (effSource) params.set("source", effSource);
     if (org) params.set("org", org);
-    if (company) params.set("company", company);
+    if (effCompany) params.set("company", effCompany);
     try {
       const r = await api<{ items: Match[]; total: number }>(`/api/matches?${params}`);
       setItems(r.items);
@@ -148,25 +160,23 @@ export default function Matches() {
           <h2>{t("myMatches")}</h2>
           <div className="row wrap">
             <input
-              placeholder="公司篩選（輸入後點「查詢」）"
+              placeholder="公司篩選"
               value={companyInput}
               onChange={(e) => setCompanyInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  setCompany(companyInput);
-                  setOffset(0);
-                }
-              }}
             />
-            <button
-              onClick={() => {
-                setCompany(companyInput);
-                setAppliedSource(resolveSource(sourceText));
-                setOffset(0);
-              }}
-            >
-              查詢
-            </button>
+            <input
+              list="match-src-list"
+              placeholder="來源：全部（可輸入如：國聘/智聯）"
+              value={sourceText}
+              onChange={(e) => setSourceText(e.target.value)}
+              style={{ width: 180 }}
+            />
+            <datalist id="match-src-list">
+              {sources.map((s) => (
+                <option key={s.code} value={s.label} />
+              ))}
+            </datalist>
+            <button onClick={runSearch}>查詢</button>
             <select
               value={campus}
               onChange={(e) => {
@@ -179,25 +189,6 @@ export default function Matches() {
               <option value="society">僅社招</option>
               <option value="intern">僅實習</option>
             </select>
-            <input
-              list="match-src-list"
-              placeholder="來源：全部（可輸入如：國聘/智聯）"
-              value={sourceText}
-              onChange={(e) => setSourceText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  setCompany(companyInput);
-                  setAppliedSource(resolveSource(sourceText));
-                  setOffset(0);
-                }
-              }}
-              style={{ width: 190 }}
-            />
-            <datalist id="match-src-list">
-              {sources.map((s) => (
-                <option key={s.code} value={s.label} />
-              ))}
-            </datalist>
             <select
               value={org}
               onChange={(e) => {
