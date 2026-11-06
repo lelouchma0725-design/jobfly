@@ -84,6 +84,9 @@ def _is_campus_posting(p: base.JobPosting) -> bool:
     return any(h.lower() in title for h in CAMPUS_TITLE_HINTS)
 
 
+BRIDGE_ONLY_PLATFORMS = {"job51", "zhaopin", "liepin", "jobsdb", "ctgoodjobs"}
+# 橋接源：服務器端無法自動採集（人機驗證/登錄態/內存限制），統一由本地橋接採集
+
 FULL_INVENTORY_SOURCES = {
     "beisen", "bosera", "citics", "gtht", "zofund", "huatai_pb",
     "feishu", "moka", "greenhouse", "lever", "workday",
@@ -330,8 +333,16 @@ def match_new_for_user(db: Session, user_id: str) -> int:
     return matched
 
 
+DAILY_TARGET_LIMIT = 8  # 每用戶每輪最多採集 N 家公司（輪轉，控制免費層負載）
+
+
 def collect_all_users(db: Session) -> dict:
-    """調度器入口：合併所有用戶的關注目標（天然按公司去重）執行採集。"""
+    """調度器入口：合併所有用戶的關注目標（天然按公司去重）執行採集。
+
+    內存/負載控制：
+    - 橋接源（job51/zhaopin 等）在 Render 跳過（本地橋接採集）
+    - 每用戶每輪最多 DAILY_TARGET_LIMIT 家公司，按最久未採優先輪轉
+    """
     users = db.execute(
         text(
             "SELECT p.id FROM profiles p "
@@ -341,13 +352,23 @@ def collect_all_users(db: Session) -> dict:
     ).mappings().all()
     total = {"users": len(users), "collected": 0, "new": 0, "errors": 0, "matched": 0}
     for u in users:
-        try:
-            r = collect_for_user(db, str(u["id"]))
-            total["collected"] += r["collected"]
-            total["new"] += r["new"]
-            total["errors"] += r["errors"]
-            total["matched"] += r["matched"]
-        except Exception:  # noqa: BLE001
-            logger.exception("用戶採集失敗 user=%s", u["id"])
-            total["errors"] += 1
+        # 輪轉：最久未採的先採，跳過橋接源
+        targets = db.execute(
+            text(
+                "SELECT id, company_name, careers_url, platform FROM watched_companies "
+                "WHERE user_id=:u AND is_active=true AND platform != ALL(:bridge) "
+                "ORDER BY last_collected_at NULLS FIRST LIMIT :n"
+            ),
+            {"u": str(u["id"]), "bridge": sorted(BRIDGE_ONLY_PLATFORMS), "n": DAILY_TARGET_LIMIT},
+        ).mappings().all()
+        for t in targets:
+            try:
+                r = collect_for_user(db, str(u["id"]), company_name=t["company_name"])
+                total["collected"] += r["collected"]
+                total["new"] += r["new"]
+                total["errors"] += r["errors"]
+                total["matched"] += r["matched"]
+            except Exception:  # noqa: BLE001
+                logger.exception("用戶採集失敗 user=%s company=%s", u["id"], t["company_name"])
+                total["errors"] += 1
     return total

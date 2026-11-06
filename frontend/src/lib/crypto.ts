@@ -51,3 +51,40 @@ export async function decryptText(keyB64: string, data: string): Promise<string 
 
 export const SENSITIVE_RE =
   /證件|证件|身份證|身份证|護照|护照|家庭|親屬|亲属|緊急聯繫|紧急联系|證件號|证件号|地址|邮编|郵編|電話|电话|手機|手机|姓名拼音|父|母/;
+
+/** 生成密鑰恢復碼（32 字符，僅顯示一次）。 */
+export function generateRecoveryCode(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const arr = crypto.getRandomValues(new Uint8Array(32));
+  return Array.from(arr, (b) => chars[b % chars.length]).join("");
+}
+
+async function _codeKey(code: string): Promise<CryptoKey> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(code.trim()));
+  return crypto.subtle.importKey("raw", digest, "AES-GCM", false, ["encrypt", "decrypt"]);
+}
+
+/** 用恢復碼包裝 E2EE 密鑰（存服務器，供新設備/改密碼後恢復）。 */
+export async function wrapKeyWithCode(keyB64: string, code: string): Promise<string> {
+  const key = await _codeKey(code);
+  const iv = crypto.getRandomValues(new Uint8Array(12)).buffer as ArrayBuffer;
+  const ct = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    new TextEncoder().encode(keyB64),
+  );
+  return _b64(iv) + "." + _b64(ct);
+}
+
+/** 用恢復碼解出 E2EE 密鑰。碼錯誤時拋出。 */
+export async function unwrapKeyWithCode(wrapped: string, code: string): Promise<string> {
+  const [ivB64, ctB64] = wrapped.split(".");
+  const key = await _codeKey(code);
+  const iv = new Uint8Array(_unb64(ivB64));
+  const pt = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: iv.buffer as ArrayBuffer },
+    key,
+    _unb64(ctB64),
+  );
+  return new TextDecoder().decode(pt);
+}

@@ -271,3 +271,33 @@ def _row_to_dict(row) -> dict:
         if hasattr(v, "isoformat"):
             d[k] = v.isoformat()
     return d
+
+class WrappedKeyRequest(BaseModel):
+    wrapped_key: str
+
+
+@router.get("/e2ee/wrapped-key")
+def get_wrapped_key(user: CurrentUser, db: DB) -> dict:
+    """取密鑰恢復碼包裝密鑰（配合用戶持有的恢復碼解出 E2EE 密鑰）。"""
+    row = db.execute(
+        text("SELECT e2ee_wrapped_key FROM user_settings WHERE user_id=:u"),
+        {"u": user["id"]},
+    ).mappings().first()
+    return {"wrapped_key": (row["e2ee_wrapped_key"] if row else None) or None}
+
+
+@router.put("/e2ee/wrapped-key")
+def put_wrapped_key(user: CurrentUser, db: DB, payload: WrappedKeyRequest) -> dict:
+    """保存/更新密鑰恢復碼包裝密鑰。"""
+    wk = str(payload.wrapped_key or "").strip()[:4000]
+    if not wk:
+        raise HTTPException(422, "wrapped_key 不可為空")
+    db.execute(
+        text(
+            "INSERT INTO user_settings (user_id, e2ee_wrapped_key) VALUES (:u, :w) "
+            "ON CONFLICT (user_id) DO UPDATE SET e2ee_wrapped_key=:w, updated_at=now()"
+        ),
+        {"u": user["id"], "w": wk},
+    )
+    db.commit()
+    return {"ok": True}

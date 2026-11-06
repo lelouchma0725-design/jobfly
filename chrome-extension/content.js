@@ -241,6 +241,83 @@
     }
   }
 
+  // ============ 職位列表採集（RPA 列表模式） ============
+  // 多站卡片選擇器（按順序嘗試，第一個命中生效）
+  const JOB_LIST_SITES = {
+    zhaopin: {
+      card: "div.job-card",
+      title: "[aria-label], .job-card__title-main span",
+      company: ".job-card__company-name",
+      salary: ".job-card__salary",
+      location: ".job-card__address, .job-card__city, .job-card__location",
+    },
+    job51: {
+      card: "div.joblist-box__item, div.job-item, .joblist .job",
+      title: ".job-name, .job-title, .joblist-item__name, [title]",
+      company: ".company-name, .joblist-item__company, .company",
+      salary: ".salary, .joblist-item__salary",
+      location: ".location, .joblist-item__location, .area",
+    },
+    liepin: {
+      card: ".job-card-wrap, .job-list-item",
+      title: ".job-title, .job-name",
+      company: ".company-name, .company",
+      salary: ".job-salary, .salary",
+      location: ".job-location, .location, .job-area",
+    },
+    jobsdb: {
+      card: "[data-automation='job-card'], article[data-card-type='JobCard']",
+      title: "[data-automation='job-card-title'], h1 a",
+      company: "[data-automation='job-card-company']",
+      salary: "[data-automation='job-card-salary']",
+      location: "[data-automation='job-card-location']",
+    },
+    ctgoodjobs: {
+      card: ".job-item, .job-card, li.job",
+      title: "a[href*='job'], .job-title, h2 a",
+      company: ".company, .company-name",
+      salary: ".salary, .salary-range",
+      location: ".location, .area",
+    },
+  };
+
+  function textOf(el, sels) {
+    if (!el) return "";
+    for (const s of (sels || "").split(",")) {
+      const n = el.matches(s.trim()) ? el : el.querySelector(s.trim());
+      if (n && n.textContent && n.textContent.trim()) {
+        return n.textContent.trim().replace(/\s+/g, " ").slice(0, 120);
+      }
+    }
+    return "";
+  }
+
+  function syncCollectJobList(siteKey) {
+    const conf = JOB_LIST_SITES[siteKey] || JOB_LIST_SITES.zhaopin;
+    const cards = Array.from(document.querySelectorAll(conf.card)).slice(0, 60);
+    const jobs = [];
+    const seen = new Set();
+    for (const el of cards) {
+      const title = textOf(el, conf.title);
+      if (!title) continue;
+      const urlEl = el.querySelector("a[href]");
+      const url = urlEl ? urlEl.href : "";
+      const ext = url || title;
+      if (seen.has(ext)) continue;
+      seen.add(ext);
+      jobs.push({
+        external_id: ext,
+        title,
+        company: textOf(el, conf.company),
+        salary: textOf(el, conf.salary),
+        location: textOf(el, conf.location),
+        url,
+        description: "",
+      });
+    }
+    return { jobs, count: jobs.length };
+  }
+
   function syncPanel(title, lines) {
     showPanel(title);
     for (const l of lines || []) log(l.text, l.ok);

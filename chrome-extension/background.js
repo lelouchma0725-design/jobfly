@@ -155,6 +155,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true, out });
           break;
         }
+        case "JOB_LIST_INGEST": {
+          const out = await apiFetch("/api/rpa/job-list-ingest", {
+            method: "POST",
+            body: JSON.stringify({ site: msg.site, jobs: msg.jobs }),
+          });
+          sendResponse({ ok: true, out });
+          break;
+        }
         case "RPA_VERIFY": {
           const out = await apiFetch("/api/rpa/verify", {
             method: "POST",

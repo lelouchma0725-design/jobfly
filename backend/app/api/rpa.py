@@ -192,3 +192,46 @@ def required_resume_for(site: str, tab: str) -> str | None:
     flow = SITE_FLOWS.get(site, {})
     mapping = flow.get("resume_by_tab", {})
     return mapping.get(tab)
+
+class JobListIngestRequest(BaseModel):
+    site: str  # jobsdb / ctgoodjobs / liepin / job51 / zhaopin / zhaopin-login
+    jobs: list[dict]  # [{external_id, title, company, location, salary, url, description}]
+
+
+@router.post("/job-list-ingest")
+def job_list_ingest(user: CurrentUser, db: DB, payload: JobListIngestRequest) -> dict:
+    """RPA 列表採集：用戶瀏覽器（已過人機驗證/已登錄）採集職位列表後回傳入庫。"""
+    from app.collectors.base import JobPosting
+    from app.collectors.pipeline import store_postings
+
+    site = (payload.site or "").strip()[:40]
+    allowed = {"jobsdb", "ctgoodjobs", "liepin", "job51", "zhaopin"}
+    if site not in allowed:
+        raise HTTPException(422, f"不支持的來源站點: {site}")
+    posts = []
+    for j in payload.jobs:
+        title = str(j.get("title") or "").strip()
+        ext = str(j.get("external_id") or j.get("url") or "")
+        if not title or not ext:
+            continue
+        salary = str(j.get("salary") or "")
+        is_campus = "校" in title or "實習" in title or "实习" in title
+        posts.append(JobPosting(
+            source=site,
+            external_id=ext,
+            company_name=str(j.get("company") or "RPA採集"),
+            title=title,
+            apply_url=str(j.get("url") or ""),
+            location=str(j.get("location") or "") or None,
+            department=None,
+            description_text=str(j.get("description") or title)[:6000],
+            posted_at=None,
+            raw={"tab": "校園招聘" if is_campus else "社會招聘",
+                 "is_campus": is_campus,
+                 "is_intern": "實習" in title or "实习" in title,
+                 "salary": salary,
+                 "site": site,
+                 "collected_by": "rpa"},
+        ))
+    stats = store_postings(db, posts)
+    return {"ok": True, **stats}
