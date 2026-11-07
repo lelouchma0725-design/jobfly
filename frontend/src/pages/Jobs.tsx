@@ -121,7 +121,7 @@ export default function Jobs() {
   }
 
   function runSearch() {
-    const next = { q, company, source: resolveSource(sourceText) };
+    const next = { q, company, source: sourceText.trim() };
     setApplied(next);
     setOffset(0);
     void load(next); // 顯式傳參，避免 setState 異步導致舊值查詢
@@ -222,7 +222,7 @@ export default function Jobs() {
               <span className="notice" style={{ margin: 0 }}>
                 共 {total} 條結果（{applied.q ? `關鍵詞:${applied.q} ` : ""}
                 {applied.company ? `公司:${applied.company} ` : ""}
-                {applied.source ? `來源:${sources.find((s) => s.code === applied.source)?.label ?? applied.source}` : ""}）
+                {applied.source ? `來源:${applied.source}` : ""}）
               </span>
             ) : (
               <span className="muted" style={{ margin: 0 }}>共 {total} 條崗位（全部來源）</span>

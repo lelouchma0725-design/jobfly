@@ -86,7 +86,7 @@ export default function Matches() {
   const [offset, setOffset] = useState(0);
 
   function runSearch() {
-    const next = { company: companyInput, source: resolveSource(sourceText) };
+    const next = { company: companyInput, source: sourceText.trim() };
     setApplied(next);
     setOffset(0);
     void load(next);
@@ -180,7 +180,7 @@ export default function Matches() {
             {applied.source || applied.company ? (
               <span className="notice" style={{ margin: 0 }}>
                 共 {total} 條結果（{applied.company ? `公司:${applied.company} ` : ""}
-                {applied.source ? `來源:${sources.find((s) => s.code === applied.source)?.label ?? applied.source}` : ""}）
+                {applied.source ? `來源:${applied.source}` : ""}）
               </span>
             ) : (
               <span className="muted" style={{ margin: 0 }}>共 {total} 條匹配</span>
