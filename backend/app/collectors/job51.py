@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 COMPANY = "前程無憂"
 KEYWORDS = ("数据分析", "量化研究", "金融科技", "行业研究", "商业分析")
 AREAS = (("010000", "北京"), ("020000", "上海"))
-PAGES_PER_KEYWORD = 8  # 每關鍵詞 8 頁（160 個），控制時長
+PAGES_PER_KEYWORD = 5  # 每關鍵詞 5 頁（100 個），控制時長
 HEADERS_BASE = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -114,7 +114,7 @@ class Job51Collector:
                                     f"https://we.51job.com/pc/search?keyword={quote(kw)}"
                                     f"&searchType=2&sortType=0&metro=&jobArea={area_code}"
                                     f"&pageNum={pnum}",
-                                    wait_until="domcontentloaded", timeout=60000,
+                                    wait_until="domcontentloaded", timeout=30000,
                                 )
                                 page.wait_for_timeout(9000)
                             except Exception as exc:  # noqa: BLE001
