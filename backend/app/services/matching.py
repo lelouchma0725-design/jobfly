@@ -188,6 +188,27 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
             "passed": False,
         })
 
+    # 合同工（Contract）：香港地區崗位，用戶未開啟接受 → 硬性過濾（分數清零沉底）
+    accept_contract = False
+    cs = db.execute(
+        text("SELECT accept_contract_hk FROM user_settings WHERE user_id=:u"),
+        {"u": user_id},
+    ).mappings().first()
+    if cs and cs.get("accept_contract_hk") is not None:
+        accept_contract = bool(cs["accept_contract_hk"])
+    if not accept_contract:
+        text_blob = ((posting.get("description_text") or "") + " " + (posting.get("title") or "")).lower()
+        is_contract = bool(re.search(r"\bcontract\b|合約|合同工|合约|合同", text_blob, re.I))
+        loc_blob = ((posting.get("location") or "") + " " + (posting.get("description_text") or "")).lower()
+        is_hk = bool(re.search(r"香港|hong kong|\bhk\b|\bhong\s?kong\b", loc_blob, re.I))
+        if is_contract and is_hk:
+            failures.append({
+                "field": "contract",
+                "kind": "other",
+                "requirement": "香港地區合同工（Contract），已按個人設置不接受處理",
+                "passed": False,
+            })
+
     if failures:
         db.execute(
             text(
@@ -195,7 +216,8 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
                 INSERT INTO job_matches (user_id, posting_id, profile_version_id, hard_failures, status)
                 VALUES (:uid, :pid, :pv, CAST(:hf AS jsonb), 'hard_failed')
                 ON CONFLICT (user_id, posting_id) DO UPDATE
-                  SET hard_failures=EXCLUDED.hard_failures, status='hard_failed', updated_at=now()
+                  SET hard_failures=EXCLUDED.hard_failures, status='hard_failed',
+                      match_score=NULL, priority_score=NULL, updated_at=now()
                 """
             ),
             {"uid": user_id, "pid": posting_id, "pv": profile["id"], "hf": j(failures)},

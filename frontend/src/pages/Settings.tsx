@@ -15,6 +15,7 @@ type Settings = {
   location_weight: number;
   campus_preference: "campus" | "society" | "both";
   org_preference: "headquarter" | "branch" | "both";
+  accept_contract_hk: boolean;
 };
 
 const DEFAULTS: Settings = {
@@ -31,6 +32,7 @@ const DEFAULTS: Settings = {
   location_weight: 10,
   campus_preference: "both",
   org_preference: "both",
+  accept_contract_hk: false,
 };
 
 type PushChannels = Record<string, string>;
@@ -176,6 +178,16 @@ export default function Settings() {
               {desc}
             </label>
           ))}
+
+          <h3>香港地區 Contract 合同工（6 個月合約等固定期限）</h3>
+          <label className="row">
+            <input
+              type="checkbox"
+              checked={s.accept_contract_hk}
+              onChange={(e) => save({ accept_contract_hk: e.target.checked })}
+            />
+            接受 Contract 合同工崗位（默認不接受：此類崗位硬性過濾並沉底）
+          </label>
 
           <h3>自動投遞模式</h3>
           {(

@@ -24,6 +24,7 @@ class SettingsUpdate(BaseModel):
     preferred_locations: list[str] | None = None
     location_weight: int | None = Field(default=None, ge=0, le=25)
     org_preference: Literal["headquarter", "branch", "both"] | None = None
+    accept_contract_hk: bool | None = None
 
     @field_validator("timezone")
     @classmethod
