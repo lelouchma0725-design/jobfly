@@ -238,7 +238,8 @@ async function collectJobList() {
       }
       throw new Error(
         "本頁未識別到職位卡片。" + (debug || "（無診斷信息）") +
-        (pageState ? " ｜頁面狀態:" + pageState : "")
+        (pageState ? " ｜頁面狀態:" + pageState : "") +
+        (__lastInjectErr ? " ｜" + __lastInjectErr : "")
       );
     }
     $("status").textContent = `已識別 ${all.length} 個職位，正在入庫…`;
@@ -266,9 +267,10 @@ async function pickTab() {
   return site[site.length - 1] || active;
 }
 
-/** 頁面注入：先頂層幀（主文檔）注入庫並執行；主文檔不可用時嘗試全幀。 */
+/** 頁面注入：先頂層幀注入庫並執行；文件注入失敗時改用字符串 eval 兜底。 */
+let __lastInjectErr = "";
 async function inject(tab, func, args = []) {
-  let injectErr = "";
+  __lastInjectErr = "";
   try {
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
@@ -276,15 +278,22 @@ async function inject(tab, func, args = []) {
     });
     await new Promise((r) => setTimeout(r, 400));
   } catch (e) {
-    injectErr = "頂層注入失敗:" + (e?.message || e) + "；";
+    __lastInjectErr = "文件注入失敗:" + (e?.message || e) + "；";
+    // 兜底：讀取腳本內容，以字符串形式注入並執行
     try {
+      const url = chrome.runtime.getURL("content.js");
+      const resp = await fetch(url);
+      const code = await resp.text();
       await chrome.scripting.executeScript({
-        target: { tabId: tab.id, allFrames: true },
-        files: ["content.js"],
+        target: { tabId: tab.id },
+        func: (c) => {
+          try { (0, eval)(c); return "eval-ok"; } catch (err) { return "eval-err:" + (err && err.message); }
+        },
+        args: [code],
       });
       await new Promise((r) => setTimeout(r, 400));
-    } catch {
-      /* 全幀也失敗 */
+    } catch (e2) {
+      __lastInjectErr += "字符串注入失敗:" + (e2?.message || e2);
     }
   }
   try {
