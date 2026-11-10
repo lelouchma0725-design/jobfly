@@ -1,6 +1,6 @@
 /** JobsComing RPA 填報引擎 v0.6.1 — 單一 IIFE，全同步微操作 + 消息監聽。 */
 (() => {
-  const GUARD = "__jobsfly_rpa_v2__";
+  const GUARD = "__jobsfly_rpa_v4__";
   if (window[GUARD]) return;
   window[GUARD] = true;
 
