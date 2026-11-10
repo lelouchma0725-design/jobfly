@@ -43,11 +43,19 @@ async function getKeyB64() {
 
 const SITE_RE = /citics\.com|gtht\.com|greenhouse\.io|lever\.co/;
 
-function showLogin() {
+function showSpinner(on) {
+  const s = document.getElementById("spinner");
+  if (s) s.style.display = on ? "block" : "none";
+}
+
+function showLogin(msg) {
   $("loginBox").style.display = "block";
   $("taskBox").style.display = "none";
-  $("status").textContent = "登錄已失效，請重新登錄";
-  $("status").className = "err";
+  showSpinner(false);
+  if (msg) {
+    $("status").textContent = msg;
+    $("status").className = "err";
+  }
 }
 
 function isAuthError(e) {
@@ -60,23 +68,38 @@ chrome.storage.local.get("token").then(({ token }) => {
 });
 
 $("signin").addEventListener("click", async () => {
-  $("status").textContent = "登錄中…";
   const email = $("email").value.trim();
   const password = $("password").value;
-  const r = await chrome.runtime.sendMessage({
-    type: "SIGNIN",
-    email,
-    password,
-  });
+  if (!email || !password) {
+    $("status").textContent = "請填寫郵箱和密碼";
+    $("status").className = "err";
+    return;
+  }
+  // 點擊後立即進入加載狀態（轉圈 + 禁用按鈕）
+  $("status").textContent = "正在登錄並喚醒服務器（免費層冷啟動約 10-30 秒）…";
+  $("status").className = "";
+  showSpinner(true);
+  $("signin").disabled = true;
+  let r;
+  try {
+    r = await chrome.runtime.sendMessage({ type: "SIGNIN", email, password });
+  } catch (e) {
+    r = { ok: false, error: e?.message || "連線失敗" };
+  }
+  showSpinner(false);
+  $("signin").disabled = false;
   if (r && r.ok) {
     // 派生 E2EE 密鑰（僅存瀏覽器 session，關閉瀏覽器即清除）
     const keyB64 = await deriveKeyB64(password, "jobfly:" + email);
     await chrome.storage.session.set({ rawKeyB64: keyB64 });
     $("password").value = "";
-    showTasks();
+    $("status").textContent = "✅ 登錄成功";
+    $("status").className = "ok";
+    showTasks(); // 自動刷新進入登錄後界面
   } else {
-    $("status").textContent = "登錄失敗: " + (r?.error || "未知錯誤");
+    $("status").textContent = "登錄失敗: " + (r?.error || "未知錯誤") + "（請重新輸入）";
     $("status").className = "err";
+    showLogin(); // 刷新回登錄表單
   }
 });
 
@@ -130,6 +153,68 @@ async function loadTasks() {
     box.appendChild(div);
   }
   $("status").textContent = "";
+}
+
+function detectListSite(url) {
+  const u = url || "";
+  if (u.includes("jobsdb.com")) return "jobsdb";
+  if (u.includes("ctgoodjobs.hk")) return "ctgoodjobs";
+  if (u.includes("liepin.com")) return "liepin";
+  if (u.includes("51job.com")) return "job51";
+  if (u.includes("zhaopin.com")) return "zhaopin";
+  return "";
+}
+
+/** 職位列表採集：第三方招聘站搜索結果頁 → 回傳入庫。 */
+async function collectJobList() {
+  showSpinner(true);
+  $("status").textContent = "正在識別頁面職位卡片…";
+  $("status").className = "";
+  try {
+    const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = active;
+    if (!tab || !tab.url || !/^https?:/.test(tab.url)) {
+      throw new Error("請先打開招聘網站搜索結果頁");
+    }
+    const site = detectListSite(tab.url);
+    if (!site) {
+      throw new Error("當前頁面不是支援的招聘站點（JobsDB/CTgoodjobs/獵聘/前程無憂/智聯）");
+    }
+    $("status").textContent = `正在採集 ${site} 頁面職位…`;
+    const frames = await inject(tab, (s) => {
+      const w = window.__jrpa_sync__;
+      if (!w || !w.collectJobList) return null;
+      const r = w.collectJobList(s);
+      return JSON.stringify(r);
+    }, [site]);
+    let all = [];
+    for (const fr of frames || []) {
+      if (typeof fr === "string") {
+        try {
+          const parsed = JSON.parse(fr);
+          if (parsed && parsed.jobs) all = all.concat(parsed.jobs);
+        } catch { /* 忽略 */ }
+      } else if (fr && fr.jobs) {
+        all = all.concat(fr.jobs);
+      }
+    }
+    if (!all.length) {
+      throw new Error("本頁未識別到職位卡片（請確認已登錄/過驗證，並滾動加載列表後重試）");
+    }
+    $("status").textContent = `已識別 ${all.length} 個職位，正在入庫…`;
+    const r = await bg("JOB_LIST_INGEST", { site, jobs: all });
+    if (r && r.ok) {
+      $("status").textContent = `✅ 已入庫 ${r.out.new ?? 0} 個新職位（更新 ${r.out.updated ?? 0}）`;
+      $("status").className = "ok";
+    } else {
+      $("status").textContent = "入庫失敗: " + (r?.error || "");
+      $("status").className = "err";
+    }
+  } catch (e) {
+    $("status").textContent = "採集失敗: " + (e?.message || e);
+    $("status").className = "err";
+  }
+  showSpinner(false);
 }
 
 /** 選目標頁籤：優先當前活動頁（若是官網）；否則找最近訪問的官網頁籤。 */
@@ -322,5 +407,7 @@ async function runAction(type, extra) {
 }
 
 $("scrape").addEventListener("click", () => runAction("SCRAPE", {}));
+const btnJobList = document.getElementById("btn-joblist");
+if (btnJobList) btnJobList.addEventListener("click", () => void collectJobList());
 $("fillResume").addEventListener("click", () => runAction("FILL_RESUME", {}));
 $("verify").addEventListener("click", () => runAction("VERIFY", {}));

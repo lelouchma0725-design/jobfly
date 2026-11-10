@@ -15,6 +15,12 @@
     .ok { color: #15803d; }
     .err { color: #dc2626; }
     #status { min-height: 16px; }
+    #spinner {
+      display: none; width: 26px; height: 26px; margin: 10px auto;
+      border: 3px solid #d1d5db; border-top-color: #1d4ed8;
+      border-radius: 50%; animation: jr-spin 0.8s linear infinite;
+    }
+    @keyframes jr-spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -55,12 +61,13 @@
     <h3 style="font-size:13px;margin:10px 0 4px">🎯 投遞任務</h3>
     <div id="tasks"></div>
     <button id="refresh" class="ghost">刷新任務</button>
-    <div id="status"></div>
     <p class="muted">
       申請頁填報用法：先在官網登錄並打開崗位申請頁 → 面板點對應任務的「開始填報」→
       表單自動填充並高亮，你只需檢查並點「提交」。
     </p>
   </div>
+  <div id="spinner"></div>
+  <div id="status"></div>
   <script src="popup.js"></script>
 </body>
 </html>
