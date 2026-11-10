@@ -84,7 +84,7 @@ def _is_campus_posting(p: base.JobPosting) -> bool:
     return any(h.lower() in title for h in CAMPUS_TITLE_HINTS)
 
 
-BRIDGE_ONLY_PLATFORMS = {"job51", "zhaopin", "liepin", "jobsdb", "ctgoodjobs"}  # Render 海外 IP 被攔，統一本地橋接
+BRIDGE_ONLY_PLATFORMS = {"iguopin", "job51", "zhaopin", "liepin", "jobsdb", "ctgoodjobs"}  # 海外 IP 被攔/限流，統一本地橋接
 # 橋接源：服務器端無法自動採集（人機驗證/登錄態/內存限制），統一由本地橋接採集
 
 FULL_INVENTORY_SOURCES = {

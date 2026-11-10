@@ -35,15 +35,7 @@ def _job_collect() -> None:
             )
         )
         report = collect_all_users(db)
-        # 國聘每日慢速補採（平台限流，每天一輪累積補全；目標 ~736，見 docs/08-版本管理.md）
-        try:
-            from app.collectors.pipeline import collect_for_user
-
-            ig = collect_for_user(db, "b2b614f6-6867-467e-bbdd-d3eb453f3353", company_name="國聘")
-            report.setdefault("iguopin", ig)
-            logger.info("國聘每日補採: %s", {k: ig.get(k) for k in ("collected", "new", "errors")})
-        except Exception:  # noqa: BLE001
-            logger.exception("國聘每日補採失敗")
+        # 國聘等橋接源統一由本地 bridge_daily.py 採集（Render 海外 IP 被限流）
         db.execute(
             text(
                 "UPDATE collect_jobs SET status='done', finished_at=now(), payload=CAST(:p AS jsonb) "

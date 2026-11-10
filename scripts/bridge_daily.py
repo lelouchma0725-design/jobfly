@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
 from sqlalchemy import text  # noqa: E402
 
+from app.collectors.iguopin import IguopinCollector  # noqa: E402
 from app.collectors.job51 import Job51Collector  # noqa: E402
 from app.collectors.pipeline import store_postings  # noqa: E402
 from app.collectors.zhaopin import ZhaopinCollector  # noqa: E402
@@ -41,6 +42,7 @@ def run(name: str, collector) -> None:
 
 
 if __name__ == "__main__":
+    run("國聘", IguopinCollector())
     run("智聯招聘", ZhaopinCollector())
     run("前程無憂", Job51Collector())
     print("橋接採集完成")
