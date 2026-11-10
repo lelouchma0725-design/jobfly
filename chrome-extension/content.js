@@ -297,6 +297,20 @@
     const anchorsAll = Array.from(document.querySelectorAll("a[href]")).filter((a) =>
       /\/job\/|\/jobs\/|job-details|jobid|\/position\//i.test(a.href || "")
     );
+    // 從職位鏈接沿祖先鏈找公司名（SEEK 卡片公司鏈接 /companies/ 或 company 自動化屬性）
+    function findCompany(a) {
+      let n = a;
+      for (let i = 0; i < 8 && n; i++) {
+        n = n.parentElement;
+        if (!n) break;
+        const c = n.querySelector("a[href*='/company']");
+        if (c && c.textContent && c.textContent.trim()) return c.textContent.trim().slice(0, 120);
+        const dc = n.querySelector("[data-automation*='company'], [data-automation*='Company']");
+        if (dc && dc.textContent && dc.textContent.trim()) return dc.textContent.trim().slice(0, 120);
+      }
+      return "";
+    }
+
     // JobsDB（SEEK）：直接從職位鏈接提取（aria-label 標題 + /job/編號）
     if (siteKey === "jobsdb") {
       const jobs = [];
@@ -313,10 +327,11 @@
           const el = card ? card.querySelector(sel) : null;
           return el && el.textContent ? el.textContent.trim().slice(0, 120) : "";
         };
+        const company = findCompany(a) || q("[data-automation*='company'], [data-automation*='Company']");
         jobs.push({
           external_id: id,
           title,
-          company: q("[data-automation*='company'], [data-automation*='Company']"),
+          company,
           salary: q("[data-automation*='salary'], [data-automation*='Salary']"),
           location: q("[data-automation*='location'], [data-automation*='Location']"),
           url: href,

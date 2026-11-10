@@ -178,7 +178,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     };
                     return {
                       title: t("h1"),
-                      company: t("[data-automation*='company'], [data-automation*='Company']"),
+                      company: t("a[href*='/company']") || t("[data-automation*='advertiser']") || t("[data-automation*='company'], [data-automation*='Company']"),
                       salary: t("[data-automation*='salary'], [data-automation*='Salary']"),
                       location: t("[data-automation*='location'], [data-automation*='Location']"),
                       description: t("[data-automation='jobAdDetails'], [data-automation*='jobDescription'], [data-automation*='description'], div[class*='description'], [class*='jobDescription']"),
