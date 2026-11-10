@@ -219,7 +219,7 @@ def job_list_ingest(user: CurrentUser, db: DB, payload: JobListIngestRequest) ->
         posts.append(JobPosting(
             source=site,
             external_id=ext,
-            company_name=str(j.get("company") or "").strip() or None,
+            company_name=str(j.get("company") or "").strip(),
             title=title,
             apply_url=str(j.get("url") or ""),
             location=str(j.get("location") or "") or None,
