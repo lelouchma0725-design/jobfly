@@ -192,7 +192,13 @@ async function collectJobList() {
       throw new Error("當前頁面不是支援的招聘站點（JobsDB/CTgoodjobs/獵聘/前程無憂/智聯）");
     }
     $("status").textContent = `正在採集 ${site} 頁面職位…`;
-    // 先檢查頁面腳本狀態（診斷用）
+    const frames = await inject(tab, (s) => {
+      const w = window.__jrpa_sync__;
+      if (!w || !w.collectJobList) return null;
+      const r = w.collectJobList(s);
+      return JSON.stringify(r);
+    }, [site]);
+    // 注入後再檢查頁面腳本狀態（診斷用）
     let pageState = "";
     try {
       const probe = await chrome.scripting.executeScript({
@@ -202,19 +208,12 @@ async function collectJobList() {
             has: !!window.__jrpa_sync__,
             hasCL: typeof (window.__jrpa_sync__ && window.__jrpa_sync__.collectJobList),
             v4: !!window.__jrpa_run_v4__,
-            anchors: document.querySelectorAll("a[href*='/job']").length,
           }),
       });
       pageState = (probe && probe[0] && probe[0].result) || "";
     } catch (e) {
       pageState = "probe錯誤:" + (e?.message || e);
     }
-    const frames = await inject(tab, (s) => {
-      const w = window.__jrpa_sync__;
-      if (!w || !w.collectJobList) return null;
-      const r = w.collectJobList(s);
-      return JSON.stringify(r);
-    }, [site]);
     let all = [];
     for (const fr of frames || []) {
       if (typeof fr === "string") {

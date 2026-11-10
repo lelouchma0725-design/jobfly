@@ -332,14 +332,18 @@
         description: "",
       });
     }
-    // 診斷信息：沒採到時幫助定位頁面結構
-    const debug = jobs.length
-      ? ""
-      : `頁面職位鏈接數:${anchorsAll.length}，樣本 class:` +
-        Array.from(new Set(anchorsAll.slice(0, 3).map((a) => (a.closest("article, li, div[class]") || a.parentElement || {}).className || "")))
-          .filter(Boolean)
-          .join(" / ")
-          .slice(0, 200);
+    // 診斷信息：沒採到時回傳頁面結構樣本（供精確適配）
+    let debug = "";
+    if (!jobs.length) {
+      const cardEl = document.querySelector("[class*='_1npagbb0']");
+      const aEl = anchorsAll[0];
+      debug = JSON.stringify({
+        anchors: anchorsAll.length,
+        cardSelHits: document.querySelectorAll("[class*='_1npagbb0']").length,
+        cardHTML: (cardEl ? cardEl.outerHTML : "").slice(0, 600),
+        anchorHTML: (aEl ? aEl.outerHTML : "").slice(0, 300),
+      });
+    }
     return { jobs, count: jobs.length, debug };
   }
 
