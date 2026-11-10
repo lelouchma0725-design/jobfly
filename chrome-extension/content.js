@@ -266,11 +266,11 @@
       location: ".job-location, .location, .job-area",
     },
     jobsdb: {
-      card: "[data-automation='job-card'], article[data-card-type='JobCard']",
-      title: "[data-automation='job-card-title'], h1 a",
-      company: "[data-automation='job-card-company']",
-      salary: "[data-automation='job-card-salary']",
-      location: "[data-automation='job-card-location']",
+      card: "[data-automation='job-card'], [data-automation='jobCard'], article[data-card-type='JobCard'], article[data-automation='normalJob']",
+      title: "[data-automation='job-card-title'], [data-automation='jobTitle'], h1 a",
+      company: "[data-automation='job-card-company'], [data-automation='jobCompany']",
+      salary: "[data-automation='job-card-salary'], [data-automation='jobSalary']",
+      location: "[data-automation='job-card-location'], [data-automation='jobLocation']",
     },
     ctgoodjobs: {
       card: ".job-item, .job-card, li.job",
@@ -294,13 +294,27 @@
 
   function syncCollectJobList(siteKey) {
     const conf = JOB_LIST_SITES[siteKey] || JOB_LIST_SITES.zhaopin;
-    const cards = Array.from(document.querySelectorAll(conf.card)).slice(0, 60);
+    let cards = Array.from(document.querySelectorAll(conf.card)).slice(0, 60);
+    // 通用兜底：按職位詳情鏈接識別卡片（SEEK/JobsDB 等站卡片結構多變）
+    if (!cards.length) {
+      const anchors = Array.from(document.querySelectorAll("a[href]")).filter((a) =>
+        /\/job\/|\/jobs\/|job-details|jobid|\/position\//i.test(a.href || "") &&
+        (a.textContent || "").trim().length >= 4 && (a.textContent || "").trim().length <= 90
+      );
+      cards = Array.from(
+        new Set(anchors.map((a) => a.closest("article, li, div") || a.parentElement)),
+      ).slice(0, 60);
+      if (cards.length) conf._anchorMode = true;
+    }
     const jobs = [];
     const seen = new Set();
     for (const el of cards) {
-      const title = textOf(el, conf.title);
+      let title = textOf(el, conf.title);
+      const urlEl = el.querySelector("a[href*='/job'], a[href*='job-detail'], a[href*='jobid'], a[href*='/position/']") || el.querySelector("a[href]");
+      if (conf._anchorMode && !title) {
+        title = (urlEl && urlEl.textContent ? urlEl.textContent.trim() : (el.textContent || "").trim()).slice(0, 90);
+      }
       if (!title) continue;
-      const urlEl = el.querySelector("a[href]");
       const url = urlEl ? urlEl.href : "";
       const ext = url || title;
       if (seen.has(ext)) continue;

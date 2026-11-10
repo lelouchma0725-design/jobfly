@@ -76,10 +76,11 @@ $("signin").addEventListener("click", async () => {
     return;
   }
   // 點擊後立即進入加載狀態（轉圈 + 禁用按鈕）
-  $("status").textContent = "正在登錄並喚醒服務器（免費層冷啟動約 10-30 秒）…";
+  $("status").textContent = "正在登錄，請稍候…";
   $("status").className = "";
   showSpinner(true);
   $("signin").disabled = true;
+  $("signin").textContent = "登錄中…";
   let r;
   try {
     r = await chrome.runtime.sendMessage({ type: "SIGNIN", email, password });
@@ -88,6 +89,7 @@ $("signin").addEventListener("click", async () => {
   }
   showSpinner(false);
   $("signin").disabled = false;
+  $("signin").textContent = "登錄";
   if (r && r.ok) {
     // 派生 E2EE 密鑰（僅存瀏覽器 session，關閉瀏覽器即清除）
     const keyB64 = await deriveKeyB64(password, "jobfly:" + email);
@@ -95,11 +97,16 @@ $("signin").addEventListener("click", async () => {
     $("password").value = "";
     $("status").textContent = "✅ 登錄成功";
     $("status").className = "ok";
-    showTasks(); // 自動刷新進入登錄後界面
+    showSpinner(false);
+    $("signin").disabled = false;
+    $("signin").textContent = "登錄";
+    await showTasks(); // 自動切換到登錄後界面（無需重開插件）
   } else {
     $("status").textContent = "登錄失敗: " + (r?.error || "未知錯誤") + "（請重新輸入）";
     $("status").className = "err";
-    showLogin(); // 刷新回登錄表單
+    showSpinner(false);
+    $("signin").disabled = false;
+    $("signin").textContent = "登錄";
   }
 });
 
