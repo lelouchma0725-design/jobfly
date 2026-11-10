@@ -206,7 +206,9 @@ async function collectJobList() {
           }),
       });
       pageState = (probe && probe[0] && probe[0].result) || "";
-    } catch { /* 忽略 */ }
+    } catch (e) {
+      pageState = "probe錯誤:" + (e?.message || e);
+    }
     const frames = await inject(tab, (s) => {
       const w = window.__jrpa_sync__;
       if (!w || !w.collectJobList) return null;
@@ -264,28 +266,42 @@ async function pickTab() {
   return site[site.length - 1] || active;
 }
 
-/** 頁面注入：全幀執行同步小函數並返回各幀結果數組（覆蓋 iframe 表單）。 */
+/** 頁面注入：先頂層幀（主文檔）注入庫並執行；主文檔不可用時嘗試全幀。 */
 async function inject(tab, func, args = []) {
-  // 每次強制重新注入庫（守衛防止重複執行，確保一定是最新版）
+  let injectErr = "";
   try {
     await chrome.scripting.executeScript({
-      target: { tabId: tab.id, allFrames: true },
+      target: { tabId: tab.id },
       files: ["content.js"],
     });
     await new Promise((r) => setTimeout(r, 400));
-  } catch {
-    /* 部分幀不可注入（跨域），退回頂層幀 */
+  } catch (e) {
+    injectErr = "頂層注入失敗:" + (e?.message || e) + "；";
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: true },
+        files: ["content.js"],
+      });
+      await new Promise((r) => setTimeout(r, 400));
+    } catch {
+      /* 全幀也失敗 */
+    }
   }
   try {
-    const out = await chrome.scripting.executeScript({
-      target: { tabId: tab.id, allFrames: true },
-      func,
-      args,
-    });
+    // 優先在頂層（主文檔）執行；職位列表通常在主文檔，iframe 常因跨域失敗
+    const out = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func, args });
     return (out || []).map((o) => o.result).filter((r) => r != null);
   } catch {
-    const out = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func, args });
-    return [(out || [])[0] ? out[0].result : null].filter((r) => r != null);
+    try {
+      const out = await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: true },
+        func,
+        args,
+      });
+      return (out || []).map((o) => o.result).filter((r) => r != null);
+    } catch {
+      return [];
+    }
   }
 }
 
