@@ -155,6 +155,74 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true, out });
           break;
         }
+        case "JOB_DETAIL_COLLECT": {
+          // 後台逐個打開職位詳情頁採集職責/薪資/公司/地點（彈窗可關閉）
+          (async () => {
+            const jobs = msg.jobs || [];
+            const site = msg.site || "jobsdb";
+            const total = Math.min(jobs.length, 20);
+            const enriched = [];
+            for (let i = 0; i < total; i++) {
+              const j = jobs[i];
+              let tab = null;
+              try {
+                tab = await chrome.tabs.create({ url: j.url, active: false });
+                await new Promise((r) => setTimeout(r, 7000));
+                const res = await chrome.scripting.executeScript({
+                  target: { tabId: tab.id },
+                  func: () => {
+                    const t = (sel) => {
+                      const el = document.querySelector(sel);
+                      const v = el ? el.textContent.trim().slice(0, 3000) : "";
+                      return v;
+                    };
+                    return {
+                      title: t("h1"),
+                      company: t("[data-automation*='company'], [data-automation*='Company']"),
+                      salary: t("[data-automation*='salary'], [data-automation*='Salary']"),
+                      location: t("[data-automation*='location'], [data-automation*='Location']"),
+                      description: t("[data-automation='jobAdDetails'], [data-automation*='jobDescription'], [data-automation*='description'], div[class*='description'], [class*='jobDescription']"),
+                    };
+                  },
+                });
+                const d = (res && res[0] && res[0].result) || {};
+                enriched.push({ ...j, title: d.title || j.title, company: d.company || j.company || "", salary: d.salary || j.salary || "", location: d.location || j.location || "", description: d.description || j.description || "" });
+              } catch (e) {
+                enriched.push(j);
+              } finally {
+                if (tab) {
+                  try { await chrome.tabs.remove(tab.id); } catch { /* 忽略 */ }
+                }
+                await new Promise((r) => setTimeout(r, 500));
+                try {
+                  await chrome.storage.local.set({ jobDetailProgress: { done: i + 1, total, msg: `詳情採集 ${i + 1}/${total}…` } });
+                } catch { /* 忽略 */ }
+              }
+            }
+            let out = null;
+            try {
+              out = await apiFetch("/api/rpa/job-list-ingest", {
+                method: "POST",
+                body: JSON.stringify({ site, jobs: enriched }),
+              });
+            } catch (e) {
+              out = { error: e?.message || String(e) };
+            }
+            try {
+              await chrome.storage.local.set({
+                jobDetailProgress: {
+                  done: -1,
+                  total,
+                  msg: out && out.ok
+                    ? `詳情採集完成：${out.new ?? 0} 新 / ${out.updated ?? 0} 更新（自動評分中，稍後查看「我的匹配」）`
+                    : "詳情回傳失敗: " + (out?.error || ""),
+                },
+              });
+            } catch { /* 忽略 */ }
+          })();
+          sendResponse({ ok: true, started: true });
+          break;
+        }
         case "JOB_LIST_INGEST": {
           const out = await apiFetch("/api/rpa/job-list-ingest", {
             method: "POST",

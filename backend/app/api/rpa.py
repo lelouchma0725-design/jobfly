@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -234,4 +234,27 @@ def job_list_ingest(user: CurrentUser, db: DB, payload: JobListIngestRequest) ->
                  "collected_by": "rpa"},
         ))
     stats = store_postings(db, posts)
+    # 後台自動評分：新入庫/更新的崗位 → 「我的匹配」即時可見
+    import threading
+
+    def _score_new() -> None:
+        from app.db import SessionLocal
+        from app.services.matching import score_posting
+
+        s = SessionLocal()
+        try:
+            for p in posts:
+                try:
+                    row = s.execute(
+                        text("SELECT id FROM job_postings WHERE source=:src AND external_id=:e"),
+                        {"src": p.source, "e": p.external_id},
+                    ).first()
+                    if row:
+                        score_posting(s, user["id"], str(row[0]))
+                except Exception:  # noqa: BLE001
+                    continue
+        finally:
+            s.close()
+
+    threading.Thread(target=_score_new, daemon=True).start()
     return {"ok": True, **stats}

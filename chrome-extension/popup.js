@@ -244,7 +244,10 @@ async function collectJobList() {
     $("status").textContent = `已識別 ${all.length} 個職位，正在入庫…`;
     const r = await bg("JOB_LIST_INGEST", { site, jobs: all });
     if (r && r.ok) {
-      $("status").textContent = `✅ 已入庫 ${r.out.new ?? 0} 個新職位（更新 ${r.out.updated ?? 0}）`;
+      // 自動開始後台詳情採集（逐個點開職位頁採集職責/薪資），彈窗可關閉
+      await bg("JOB_DETAIL_COLLECT", { site, jobs: all });
+      $("status").textContent =
+        `✅ 已入庫 ${r.out.new ?? 0} 個新職位。詳情採集已在後台開始（約 2 分鐘，可關閉本彈窗），完成後到「我的匹配」查看。`;
       $("status").className = "ok";
     } else {
       $("status").textContent = "入庫失敗: " + (r?.error || "");
