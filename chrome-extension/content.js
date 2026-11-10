@@ -354,6 +354,7 @@
     upload: syncUploadResume,
     panel: syncPanel,
     detectPageType,
+    collectJobList: syncCollectJobList,
   };
   window.__jrpa_run_v4__ = true;
 })();
