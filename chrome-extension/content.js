@@ -294,10 +294,38 @@
 
   function syncCollectJobList(siteKey) {
     const conf = JOB_LIST_SITES[siteKey] || JOB_LIST_SITES.zhaopin;
-    let cards = Array.from(document.querySelectorAll(conf.card)).slice(0, 60);
     const anchorsAll = Array.from(document.querySelectorAll("a[href]")).filter((a) =>
       /\/job\/|\/jobs\/|job-details|jobid|\/position\//i.test(a.href || "")
     );
+    // JobsDB（SEEK）：直接從職位鏈接提取（aria-label 標題 + /job/編號）
+    if (siteKey === "jobsdb") {
+      const jobs = [];
+      const seen = new Set();
+      for (const a of anchorsAll.slice(0, 60)) {
+        const href = a.href || "";
+        const m = href.match(/\/job\/(\d+)/i);
+        const id = m ? "jp" + m[1] : href;
+        const title = (a.getAttribute("aria-label") || a.textContent || "").trim().slice(0, 120);
+        if (!title || seen.has(id)) continue;
+        seen.add(id);
+        const card = a.closest("article") || a.closest("[data-automation]") || a.parentElement;
+        const q = (sel) => {
+          const el = card ? card.querySelector(sel) : null;
+          return el && el.textContent ? el.textContent.trim().slice(0, 120) : "";
+        };
+        jobs.push({
+          external_id: id,
+          title,
+          company: q("[data-automation*='company'], [data-automation*='Company']"),
+          salary: q("[data-automation*='salary'], [data-automation*='Salary']"),
+          location: q("[data-automation*='location'], [data-automation*='Location']"),
+          url: href,
+          description: "",
+        });
+      }
+      return { jobs, count: jobs.length, debug: "" };
+    }
+    let cards = Array.from(document.querySelectorAll(conf.card)).slice(0, 60);
     // 通用兜底：按職位詳情鏈接識別卡片（SEEK/JobsDB 等站卡片結構多變）
     if (!cards.length) {
       const anchors = Array.from(document.querySelectorAll("a[href]")).filter((a) =>
