@@ -192,6 +192,21 @@ async function collectJobList() {
       throw new Error("當前頁面不是支援的招聘站點（JobsDB/CTgoodjobs/獵聘/前程無憂/智聯）");
     }
     $("status").textContent = `正在採集 ${site} 頁面職位…`;
+    // 先檢查頁面腳本狀態（診斷用）
+    let pageState = "";
+    try {
+      const probe = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () =>
+          JSON.stringify({
+            has: !!window.__jrpa_sync__,
+            hasCL: typeof (window.__jrpa_sync__ && window.__jrpa_sync__.collectJobList),
+            v4: !!window.__jrpa_run_v4__,
+            anchors: document.querySelectorAll("a[href*='/job']").length,
+          }),
+      });
+      pageState = (probe && probe[0] && probe[0].result) || "";
+    } catch { /* 忽略 */ }
     const frames = await inject(tab, (s) => {
       const w = window.__jrpa_sync__;
       if (!w || !w.collectJobList) return null;
@@ -219,7 +234,10 @@ async function collectJobList() {
           } catch { /* 忽略 */ }
         } else if (fr && fr.debug) debug = fr.debug;
       }
-      throw new Error("本頁未識別到職位卡片。" + (debug || "（無診斷信息）"));
+      throw new Error(
+        "本頁未識別到職位卡片。" + (debug || "（無診斷信息）") +
+        (pageState ? " ｜頁面狀態:" + pageState : "")
+      );
     }
     $("status").textContent = `已識別 ${all.length} 個職位，正在入庫…`;
     const r = await bg("JOB_LIST_INGEST", { site, jobs: all });
@@ -248,20 +266,13 @@ async function pickTab() {
 
 /** 頁面注入：全幀執行同步小函數並返回各幀結果數組（覆蓋 iframe 表單）。 */
 async function inject(tab, func, args = []) {
-  // 全幀注入庫（表單可能在 iframe 中）
+  // 每次強制重新注入庫（守衛防止重複執行，確保一定是最新版）
   try {
-    const probe = await chrome.scripting.executeScript({
+    await chrome.scripting.executeScript({
       target: { tabId: tab.id, allFrames: true },
-      func: () => !!(window.__jrpa_sync__ && window.__jrpa_run_v4__),
+      files: ["content.js"],
     });
-    const missing = probe.some((r) => !(r && r.result));
-    if (missing) {
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id, allFrames: true },
-        files: ["content.js"],
-      });
-      await new Promise((r) => setTimeout(r, 400));
-    }
+    await new Promise((r) => setTimeout(r, 400));
   } catch {
     /* 部分幀不可注入（跨域），退回頂層幀 */
   }
