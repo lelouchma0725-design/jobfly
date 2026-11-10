@@ -295,6 +295,9 @@
   function syncCollectJobList(siteKey) {
     const conf = JOB_LIST_SITES[siteKey] || JOB_LIST_SITES.zhaopin;
     let cards = Array.from(document.querySelectorAll(conf.card)).slice(0, 60);
+    const anchorsAll = Array.from(document.querySelectorAll("a[href]")).filter((a) =>
+      /\/job\/|\/jobs\/|job-details|jobid|\/position\//i.test(a.href || "")
+    );
     // 通用兜底：按職位詳情鏈接識別卡片（SEEK/JobsDB 等站卡片結構多變）
     if (!cards.length) {
       const anchors = Array.from(document.querySelectorAll("a[href]")).filter((a) =>
@@ -329,7 +332,15 @@
         description: "",
       });
     }
-    return { jobs, count: jobs.length };
+    // 診斷信息：沒採到時幫助定位頁面結構
+    const debug = jobs.length
+      ? ""
+      : `頁面職位鏈接數:${anchorsAll.length}，樣本 class:` +
+        Array.from(new Set(anchorsAll.slice(0, 3).map((a) => (a.closest("article, li, div[class]") || a.parentElement || {}).className || "")))
+          .filter(Boolean)
+          .join(" / ")
+          .slice(0, 200);
+    return { jobs, count: jobs.length, debug };
   }
 
   function syncPanel(title, lines) {

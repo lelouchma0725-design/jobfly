@@ -100,7 +100,13 @@ $("signin").addEventListener("click", async () => {
     showSpinner(false);
     $("signin").disabled = false;
     $("signin").textContent = "登錄";
-    await showTasks(); // 自動切換到登錄後界面（無需重開插件）
+    try {
+      await showTasks(); // 自動切換到登錄後界面
+    } catch { /* 忽略 */ }
+    // 兜底提示：插件彈窗若因點擊頁面而關閉，重開即為登錄後狀態
+    if (document.getElementById("taskBox") && document.getElementById("taskBox").style.display !== "block") {
+      $("status").textContent = "✅ 登錄成功。若界面未切換，點一下網頁任意位置，再重新點開插件即可。";
+    }
   } else {
     $("status").textContent = "登錄失敗: " + (r?.error || "未知錯誤") + "（請重新輸入）";
     $("status").className = "err";
@@ -206,7 +212,16 @@ async function collectJobList() {
       }
     }
     if (!all.length) {
-      throw new Error("本頁未識別到職位卡片（請確認已登錄/過驗證，並滾動加載列表後重試）");
+      let debug = "";
+      for (const fr of frames || []) {
+        if (typeof fr === "string") {
+          try {
+            const d = JSON.parse(fr);
+            if (d && d.debug) debug = d.debug;
+          } catch { /* 忽略 */ }
+        } else if (fr && fr.debug) debug = fr.debug;
+      }
+      throw new Error("本頁未識別到職位卡片。" + (debug || "（無診斷信息）"));
     }
     $("status").textContent = `已識別 ${all.length} 個職位，正在入庫…`;
     const r = await bg("JOB_LIST_INGEST", { site, jobs: all });
