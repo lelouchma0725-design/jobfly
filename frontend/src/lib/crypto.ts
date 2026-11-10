@@ -11,7 +11,7 @@ export async function deriveKeyB64(password: string, salt: string): Promise<stri
     { name: "PBKDF2", salt: enc.encode(salt), iterations: 100000, hash: "SHA-256" },
     base,
     { name: "AES-GCM", length: 256 },
-    false,
+    true,
     ["encrypt", "decrypt"],
   );
   return _b64(await crypto.subtle.exportKey("raw", key));

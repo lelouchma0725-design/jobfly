@@ -9,7 +9,7 @@ async function deriveKeyB64(password, salt) {
   const base = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
   const key = await crypto.subtle.deriveKey(
     { name: "PBKDF2", salt: enc.encode(salt), iterations: 100000, hash: "SHA-256" },
-    base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"],
+    base, { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"],
   );
   const raw = await crypto.subtle.exportKey("raw", key);
   return _b64(raw);
@@ -91,16 +91,17 @@ $("signin").addEventListener("click", async () => {
   $("signin").disabled = false;
   $("signin").textContent = "登錄";
   if (r && r.ok) {
-    // 派生 E2EE 密鑰（僅存瀏覽器 session，關閉瀏覽器即清除）
-    const keyB64 = await deriveKeyB64(password, "jobfly:" + email);
-    await chrome.storage.session.set({ rawKeyB64: keyB64 });
+    // 派生 E2EE 密鑰（僅存瀏覽器 session；失敗不阻塞登錄）
+    try {
+      const keyB64 = await deriveKeyB64(password, "jobfly:" + email);
+      await chrome.storage.session.set({ rawKeyB64: keyB64 });
+    } catch { /* 密鑰派生失敗不影響登錄 */ }
     $("password").value = "";
-    $("status").textContent = "✅ 登錄成功。請點擊網頁任意位置關閉本彈窗，再重新點開插件圖標進入主界面。";
-    $("status").className = "ok";
     showSpinner(false);
     $("signin").disabled = false;
     $("signin").textContent = "登錄";
-    // 預先準備登錄後界面（下次打開即為已登錄狀態）
+    $("status").textContent = "✅ 登錄成功。請點擊網頁任意位置關閉本彈窗，再重新點開插件圖標進入主界面。";
+    $("status").className = "ok";
     try {
       await showTasks();
     } catch { /* 忽略 */ }

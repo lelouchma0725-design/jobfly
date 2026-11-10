@@ -266,11 +266,11 @@
       location: ".job-location, .location, .job-area",
     },
     jobsdb: {
-      card: "[data-automation='job-card'], [data-automation='jobCard'], article[data-card-type='JobCard'], article[data-automation='normalJob']",
-      title: "[data-automation='job-card-title'], [data-automation='jobTitle'], h1 a",
-      company: "[data-automation='job-card-company'], [data-automation='jobCompany']",
-      salary: "[data-automation='job-card-salary'], [data-automation='jobSalary']",
-      location: "[data-automation='job-card-location'], [data-automation='jobLocation']",
+      card: "[class*='_1npagbb0'], [data-automation='job-card'], [data-automation='jobCard'], article[data-card-type='JobCard'], article[data-automation='normalJob']",
+      title: "a[href*='/job']",
+      company: "[data-automation*='company'], [class*='_1npagbb0'] [class*='company']",
+      salary: "[data-automation*='salary'], [class*='salary']",
+      location: "[data-automation*='location'], [class*='location']",
     },
     ctgoodjobs: {
       card: ".job-item, .job-card, li.job",
