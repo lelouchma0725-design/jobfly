@@ -355,5 +355,5 @@
     panel: syncPanel,
     detectPageType,
   };
-  window.__jrpa_run_v3__ = true;
+  window.__jrpa_run_v4__ = true;
 })();

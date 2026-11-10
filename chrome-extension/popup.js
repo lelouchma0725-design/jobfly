@@ -95,18 +95,15 @@ $("signin").addEventListener("click", async () => {
     const keyB64 = await deriveKeyB64(password, "jobfly:" + email);
     await chrome.storage.session.set({ rawKeyB64: keyB64 });
     $("password").value = "";
-    $("status").textContent = "✅ 登錄成功";
+    $("status").textContent = "✅ 登錄成功。請點擊網頁任意位置關閉本彈窗，再重新點開插件圖標進入主界面。";
     $("status").className = "ok";
     showSpinner(false);
     $("signin").disabled = false;
     $("signin").textContent = "登錄";
+    // 預先準備登錄後界面（下次打開即為已登錄狀態）
     try {
-      await showTasks(); // 自動切換到登錄後界面
+      await showTasks();
     } catch { /* 忽略 */ }
-    // 兜底提示：插件彈窗若因點擊頁面而關閉，重開即為登錄後狀態
-    if (document.getElementById("taskBox") && document.getElementById("taskBox").style.display !== "block") {
-      $("status").textContent = "✅ 登錄成功。若界面未切換，點一下網頁任意位置，再重新點開插件即可。";
-    }
   } else {
     $("status").textContent = "登錄失敗: " + (r?.error || "未知錯誤") + "（請重新輸入）";
     $("status").className = "err";
@@ -254,7 +251,7 @@ async function inject(tab, func, args = []) {
   try {
     const probe = await chrome.scripting.executeScript({
       target: { tabId: tab.id, allFrames: true },
-      func: () => !!(window.__jrpa_sync__ && window.__jrpa_run_v3__),
+      func: () => !!(window.__jrpa_sync__ && window.__jrpa_run_v4__),
     });
     const missing = probe.some((r) => !(r && r.result));
     if (missing) {
