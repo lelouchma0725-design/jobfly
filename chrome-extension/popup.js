@@ -62,6 +62,20 @@ function isAuthError(e) {
   return !!e && (e.authExpired || String(e.message || e).includes("AUTH_EXPIRED"));
 }
 
+// 後台詳情採集進度顯示（讀取上次狀態 + 進行中輪詢）
+async function showDetailProgress() {
+  try {
+    const st = await chrome.storage.local.get("jobDetailProgress");
+    const p = st.jobDetailProgress;
+    if (p && p.msg) {
+      $("status").textContent = p.msg;
+      $("status").className = p.done === -1 ? (p.msg.includes("完成") ? "ok" : "err") : "";
+    }
+  } catch { /* 忽略 */ }
+}
+void showDetailProgress();
+setInterval(() => void showDetailProgress(), 2000);
+
 chrome.storage.local.get("token").then(({ token }) => {
   if (token) showTasks().catch((e) => isAuthError(e) && showLogin());
   else showLogin();

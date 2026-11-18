@@ -266,81 +266,88 @@ class JobDetailIngestRequest(BaseModel):
 
 @router.post("/job-detail-ingest")
 def job_detail_ingest(user: CurrentUser, payload: JobDetailIngestRequest) -> dict:
-    """RPA 逐個點開詳情頁後回傳頁面全文：LLM 抽取公司/實際僱主/薪資/職責/獵頭/合同工，後台更新+重評。"""
-    import threading
+    """RPA 逐個點開詳情頁後回傳頁面全文：LLM 抽取公司/實際僱主/薪資/職責/獵頭/合同工，同步更新+重評。
 
-    def _process() -> None:
-        from app.core.jsonutil import j
-        from app.db import SessionLocal
-        from app.services.jd_extract import extract_detail
-        from app.services.matching import score_posting
+    （Render 免費實例響應後會凍結後台線程，因此必須同步處理；擴展端分批 5 個/次控制時長。）
+    """
+    from app.core.jsonutil import j
+    from app.db import SessionLocal
+    from app.services.jd_extract import extract_detail
+    from app.services.matching import score_posting
 
-        for item in payload.jobs:
-            s = SessionLocal()
+    results = []
+    processed = 0
+    for item in payload.jobs:
+        ext = str(item.get("external_id") or "")
+        text = str(item.get("detail_text") or "")
+        s = SessionLocal()
+        try:
+            if not ext or len(text) < 40:
+                s.execute(
+                    text("INSERT INTO rpa_detail_log (site, external_id, text_len, status) VALUES (:s, :e, :t, 'empty_text')"),
+                    {"s": payload.site, "e": ext, "t": len(text)},
+                )
+                s.commit()
+                results.append({"external_id": ext, "status": "empty_text"})
+                continue
+            row = s.execute(
+                text("SELECT id, company_name, description_text, raw FROM job_postings WHERE source=:src AND external_id=:e"),
+                {"src": payload.site, "e": ext},
+            ).mappings().first()
+            if not row:
+                s.execute(
+                    text("INSERT INTO rpa_detail_log (site, external_id, text_len, status) VALUES (:s, :e, :t, 'no_row')"),
+                    {"s": payload.site, "e": ext, "t": len(text)},
+                )
+                s.commit()
+                results.append({"external_id": ext, "status": "no_row"})
+                continue
+            d = extract_detail(text, fallback_title=str(item.get("title") or ""))
+            s.execute(
+                text("INSERT INTO rpa_detail_log (site, external_id, text_len, extracted, status, error) VALUES (:s, :e, :t, CAST(:d AS jsonb), :st, :er)"),
+                {"s": payload.site, "e": ext, "t": len(text),
+                 "d": j(d) if d else None,
+                 "st": "ok" if d else "llm_fail", "er": None},
+            )
+            s.commit()
+            if not d:
+                results.append({"external_id": ext, "status": "llm_fail"})
+                continue
+            company = str(d.get("company") or "").strip()
+            employer = str(d.get("actual_employer") or "").strip()
+            desc = str(d.get("description") or "").strip()
+            salary = str(d.get("salary") or "").strip()
+            location = str(d.get("location") or "").strip()
+            raw = row["raw"] or {}
+            if isinstance(raw, str):
+                from app.core.jsonutil import loads_json
+                raw = loads_json(raw) or {}
+            new_raw = dict(raw)
+            new_raw["actual_employer"] = employer or new_raw.get("actual_employer", "")
+            new_raw["is_headhunter"] = bool(d.get("is_headhunter"))
+            new_raw["is_contract"] = bool(d.get("is_contract"))
+            new_raw["contract_note"] = str(d.get("contract_note") or "")
+            s.execute(
+                text(
+                    "UPDATE job_postings SET "
+                    "company_name=CASE WHEN :c != '' THEN :c ELSE company_name END, "
+                    "description_text=CASE WHEN :d != '' AND length(:d) > length(COALESCE(description_text,'')) THEN :d ELSE description_text END, "
+                    "location=CASE WHEN :l != '' AND (location IS NULL OR location='') THEN :l ELSE location END, "
+                    "raw=CAST(:r AS jsonb) WHERE id=:pid"
+                ),
+                {"c": company, "d": desc[:6000], "l": location, "r": j(new_raw), "pid": row["id"]},
+            )
+            s.commit()
+            processed += 1
+            results.append({"external_id": ext, "status": "ok", "company": company, "employer": employer})
             try:
-                ext = str(item.get("external_id") or "")
-                text = str(item.get("detail_text") or "")
-                if not ext or len(text) < 40:
-                    s.execute(
-                        text("INSERT INTO rpa_detail_log (site, external_id, text_len, status) VALUES (:s, :e, :t, 'empty_text')"),
-                        {"s": payload.site, "e": ext, "t": len(text)},
-                    )
-                    s.commit()
-                    continue
-                row = s.execute(
-                    text("SELECT id, company_name, description_text, raw FROM job_postings WHERE source=:src AND external_id=:e"),
-                    {"src": payload.site, "e": ext},
-                ).mappings().first()
-                if not row:
-                    s.execute(
-                        text("INSERT INTO rpa_detail_log (site, external_id, text_len, status) VALUES (:s, :e, :t, 'no_row')"),
-                        {"s": payload.site, "e": ext, "t": len(text)},
-                    )
-                    s.commit()
-                    continue
-                d = extract_detail(text, fallback_title=str(item.get("title") or ""))
-                s.execute(
-                    text("INSERT INTO rpa_detail_log (site, external_id, text_len, extracted, status, error) VALUES (:s, :e, :t, CAST(:d AS jsonb), :st, :er)"),
-                    {"s": payload.site, "e": ext, "t": len(text),
-                     "d": j(d) if d else None,
-                     "st": "ok" if d else "llm_fail", "er": None},
-                )
-                s.commit()
-                if not d:
-                    continue
-                company = str(d.get("company") or "").strip()
-                employer = str(d.get("actual_employer") or "").strip()
-                desc = str(d.get("description") or "").strip()
-                salary = str(d.get("salary") or "").strip()
-                location = str(d.get("location") or "").strip()
-                raw = row["raw"] or {}
-                if isinstance(raw, str):
-                    from app.core.jsonutil import loads_json
-                    raw = loads_json(raw) or {}
-                new_raw = dict(raw)
-                new_raw["actual_employer"] = employer or new_raw.get("actual_employer", "")
-                new_raw["is_headhunter"] = bool(d.get("is_headhunter"))
-                new_raw["is_contract"] = bool(d.get("is_contract"))
-                new_raw["contract_note"] = str(d.get("contract_note") or "")
-                s.execute(
-                    text(
-                        "UPDATE job_postings SET "
-                        "company_name=CASE WHEN :c != '' THEN :c ELSE company_name END, "
-                        "description_text=CASE WHEN :d != '' AND length(:d) > length(COALESCE(description_text,'')) THEN :d ELSE description_text END, "
-                        "location=CASE WHEN :l != '' AND (location IS NULL OR location='') THEN :l ELSE location END, "
-                        "raw=CAST(:r AS jsonb) WHERE id=:pid"
-                    ),
-                    {"c": company, "d": desc[:6000], "l": location, "r": j(new_raw), "pid": row["id"]},
-                )
-                s.commit()
-                try:
-                    score_posting(s, user["id"], str(row["id"]))
-                except Exception:  # noqa: BLE001
-                    pass
+                score_posting(s, user["id"], str(row["id"]))
             except Exception:  # noqa: BLE001
-                s.rollback()
-            finally:
-                s.close()
+                pass
+        except Exception as e:  # noqa: BLE001
+            s.rollback()
+            results.append({"external_id": ext, "status": "error", "error": str(e)[:80]})
+        finally:
+            s.close()
 
-    threading.Thread(target=_process, daemon=True).start()
-    return {"ok": True, "queued": len(payload.jobs)}
+    return {"ok": True, "queued": len(payload.jobs), "processed": processed, "results": results}

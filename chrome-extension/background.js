@@ -156,64 +156,66 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           break;
         }
         case "JOB_DETAIL_COLLECT": {
-          // 後台逐個打開職位詳情頁採集職責/薪資/公司/地點（彈窗可關閉）
+          // 後台逐個打開職位詳情頁（每批 5 個同步回傳，彈窗可關閉）
           (async () => {
             const jobs = msg.jobs || [];
             const site = msg.site || "jobsdb";
             const total = Math.min(jobs.length, 20);
-            const enriched = [];
+            let doneAll = 0;
+            const statuses = [];
             for (let i = 0; i < total; i++) {
               const j = jobs[i];
               let tab = null;
+              let detailText = "";
+              let title = j.title || "";
               try {
                 tab = await chrome.tabs.create({ url: j.url, active: false });
-                await new Promise((r) => setTimeout(r, 7000));
+                await new Promise((r) => setTimeout(r, 8000));
                 const res = await chrome.scripting.executeScript({
                   target: { tabId: tab.id },
-                  func: () => {
-                    const t = (sel) => {
-                      const el = document.querySelector(sel);
-                      const v = el ? el.textContent.trim().slice(0, 3000) : "";
-                      return v;
-                    };
-                    return {
-                      title: t("h1"),
-                      detail_text: (document.body.innerText || "").slice(0, 6000),
-                    };
-                  },
+                  func: () => ({
+                    title: (document.querySelector("h1")?.textContent || "").trim().slice(0, 200),
+                    detail_text: (document.body.innerText || "").slice(0, 6000),
+                  }),
                 });
                 const d = (res && res[0] && res[0].result) || {};
-                enriched.push({ ...j, title: d.title || j.title, detail_text: d.detail_text || "" });
+                detailText = d.detail_text || "";
+                if (d.title) title = d.title;
               } catch (e) {
-                enriched.push(j);
+                /* 單頁失敗：跳過 */
               } finally {
                 if (tab) {
                   try { await chrome.tabs.remove(tab.id); } catch { /* 忽略 */ }
                 }
-                await new Promise((r) => setTimeout(r, 500));
-                try {
-                  await chrome.storage.local.set({ jobDetailProgress: { done: i + 1, total, msg: `詳情採集 ${i + 1}/${total}…` } });
-                } catch { /* 忽略 */ }
               }
+              const batch = [{ ...j, title, detail_text: detailText }];
+              // 每 5 個同步回傳一批（後端同步處理，Render 凍結線程不影響）
+              if (batch[0].detail_text && ((i + 1) % 5 === 0 || i === total - 1)) {
+                try {
+                  const out = await apiFetch("/api/rpa/job-detail-ingest", {
+                    method: "POST",
+                    body: JSON.stringify({ site, jobs: batch }),
+                  });
+                  if (out && out.ok) doneAll += out.processed ?? 0;
+                  statuses.push(...(out && out.results ? out.results : []));
+                } catch (e) {
+                  statuses.push({ external_id: j.external_id, status: "error", error: e?.message });
+                }
+              }
+              try {
+                await chrome.storage.local.set({
+                  jobDetailProgress: { done: i + 1, total, msg: `詳情採集 ${i + 1}/${total}…（已抽取 ${doneAll}）` },
+                });
+              } catch { /* 忽略 */ }
+              await new Promise((r) => setTimeout(r, 500));
             }
-            const lens = enriched.map((x) => (x.detail_text || "").length);
-            let out = null;
-            try {
-              out = await apiFetch("/api/rpa/job-detail-ingest", {
-                method: "POST",
-                body: JSON.stringify({ site, jobs: enriched }),
-              });
-            } catch (e) {
-              out = { error: e?.message || String(e) };
-            }
+            const okN = statuses.filter((x) => x && x.status === "ok").length;
             try {
               await chrome.storage.local.set({
                 jobDetailProgress: {
                   done: -1,
                   total,
-                  msg: out && out.ok
-                    ? `詳情採集完成：已回傳 ${out.queued ?? 0} 個詳情頁（文本長度 ${lens.join("/")}），後端 AI 正在抽取並評分（約 1-2 分鐘）`
-                    : "詳情回傳失敗: " + (out?.error || ""),
+                  msg: `詳情採集完成：${total} 頁，AI 抽取成功 ${doneAll}，含公司 ${okN}。到「我的匹配」查看（評分已同步完成）。`,
                 },
               });
             } catch { /* 忽略 */ }
