@@ -198,6 +198,27 @@ function detectListSite(url) {
 }
 
 /** 職位列表採集：第三方招聘站搜索結果頁 → 回傳入庫。 */
+async function backfillMissingCompany() {
+  $("status").textContent = "正在查詢缺失公司名的崗位…";
+  $("status").className = "";
+  try {
+    const r = await bg("BACKFILL_MISSING", {});
+    if (!r || !r.ok) throw new Error(r?.error || "查詢失敗");
+    const jobs = (r.out && r.out.jobs) || [];
+    if (!jobs.length) {
+      $("status").textContent = "沒有缺失公司名的崗位了 ✓";
+      $("status").className = "ok";
+      return;
+    }
+    $("status").textContent = `發現 ${jobs.length} 個缺失公司名的崗位，開始逐個打開詳情頁回填（請不要操作瀏覽器）…`;
+    const batch = Number(document.getElementById("detailBatch")?.value || 100);
+    await bg("JOB_DETAIL_COLLECT", { site: "jobsdb", jobs, batch });
+  } catch (e) {
+    $("status").textContent = "操作失敗: " + (e?.message || e);
+    $("status").className = "err";
+  }
+}
+
 async function collectJobList() {
   showSpinner(true);
   $("status").textContent = "正在識別頁面職位卡片…";
