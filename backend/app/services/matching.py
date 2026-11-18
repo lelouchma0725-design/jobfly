@@ -190,27 +190,6 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
             "passed": False,
         })
 
-    # 合同工（Contract）：香港地區崗位，用戶未開啟接受 → 硬性過濾（分數清零沉底）
-    accept_contract = False
-    cs = db.execute(
-        text("SELECT accept_contract_hk FROM user_settings WHERE user_id=:u"),
-        {"u": user_id},
-    ).mappings().first()
-    if cs and cs.get("accept_contract_hk") is not None:
-        accept_contract = bool(cs["accept_contract_hk"])
-    if not accept_contract:
-        text_blob = ((posting.get("description_text") or "") + " " + (posting.get("title") or "")).lower()
-        is_contract = bool(re.search(r"\bcontract\b|合約|合同工|合约|合同", text_blob, re.I))
-        loc_blob = ((posting.get("location") or "") + " " + (posting.get("description_text") or "")).lower()
-        is_hk = bool(re.search(r"香港|hong kong|\bhk\b|\bhong\s?kong\b", loc_blob, re.I))
-        if is_contract and is_hk:
-            failures.append({
-                "field": "contract",
-                "kind": "other",
-                "requirement": "香港地區合同工（Contract），已按個人設置不接受處理",
-                "passed": False,
-            })
-
     if failures:
         db.execute(
             text(
@@ -268,6 +247,29 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
     # ── 貼合度 = 純個人條件匹配（LLM），不做任何偏好加減 ──
     fit_score = min(max(int(scored["match_score"]), 50), 100)
 
+    # ── 合同工（Contract）封頂 70：按個人設置不接受時大幅降分 ──
+    contract_penalty = 0
+    accept_contract = False
+    cs = db.execute(
+        text("SELECT accept_contract_hk FROM user_settings WHERE user_id=:u"),
+        {"u": user_id},
+    ).mappings().first()
+    if cs and cs.get("accept_contract_hk") is not None:
+        accept_contract = bool(cs["accept_contract_hk"])
+    if not accept_contract:
+        raw = posting.get("raw") or {}
+        if isinstance(raw, str):
+            from app.core.jsonutil import loads_json
+            raw = loads_json(raw) or {}
+        text_blob = ((posting.get("title") or "") + " " + (posting.get("description_text") or "")).lower()
+        is_contract = (
+            bool(raw.get("is_contract"))
+            or bool(re.search(r"\bcontract\b|合約|合同|合约|fixed[- ]term|\b\d+\s*(months?|個月|个月)\b", text_blob, re.I))
+        )
+        if is_contract:
+            fit_score = min(fit_score, 70)
+            contract_penalty = -1  # 標記：已封頂
+
     # ── 投遞優先級 = 貼合度 + 偏好加權（地區/校招職級/總部分支/公司精細化），只用於排序與投遞選擇 ──
     loc_adj = _location_adjust(db, user_id, posting["location"])
     org_adj = _org_adjust(db, user_id, posting.get("org_level") or "unknown")
@@ -302,7 +304,12 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
         "org_adjust": org_adj,
         "hk_adjust": hk_adj,
         "hk_detail": hk_detail,
+        "contract_capped": bool(contract_penalty),
     })
+    if contract_penalty:
+        reasons = scored.get("reasons") or []
+        reasons.append("合同工（Contract）崗位：按個人設置貼合度封頂 70")
+        scored["reasons"] = reasons
 
     db.execute(
         text(

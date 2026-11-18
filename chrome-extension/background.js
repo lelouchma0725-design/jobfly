@@ -233,6 +233,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true, started: true, note: "將在當前標籤順序打開職位詳情頁" });
           break;
         }
+        case "BACKFILL_MISSING": {
+          const out = await apiFetch("/api/rpa/jobs-missing-company?site=jobsdb");
+          sendResponse({ ok: true, out });
+          break;
+        }
         case "JOB_LIST_INGEST": {
           const out = await apiFetch("/api/rpa/job-list-ingest", {
             method: "POST",

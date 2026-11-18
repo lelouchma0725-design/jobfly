@@ -351,3 +351,19 @@ def job_detail_ingest(user: CurrentUser, payload: JobDetailIngestRequest) -> dic
             s.close()
 
     return {"ok": True, "queued": len(payload.jobs), "processed": processed, "results": results}
+
+@router.get("/jobs-missing-company")
+def jobs_missing_company(user: CurrentUser, db: DB, site: str = "jobsdb") -> dict:
+    """返回指定來源缺失公司名的崗位（供 RPA 精準回填詳情）。"""
+    rows = db.execute(
+        text(
+            "SELECT external_id, title, apply_url FROM job_postings "
+            "WHERE source=:s AND is_active=true "
+            "AND (company_name IS NULL OR company_name IN ('','RPA採集','Jobsdb','—')) "
+            "ORDER BY first_seen_at DESC LIMIT 100"
+        ),
+        {"s": site[:40]},
+    ).mappings().all()
+    return {"site": site, "count": len(rows), "jobs": [
+        {"external_id": r["external_id"], "title": r["title"], "url": r["apply_url"]} for r in rows
+    ]}

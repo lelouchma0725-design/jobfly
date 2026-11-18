@@ -481,5 +481,7 @@ async function runAction(type, extra) {
 $("scrape").addEventListener("click", () => runAction("SCRAPE", {}));
 const btnJobList = document.getElementById("btn-joblist");
 if (btnJobList) btnJobList.addEventListener("click", () => void collectJobList());
+const btnBackfill = document.getElementById("btn-backfill");
+if (btnBackfill) btnBackfill.addEventListener("click", () => void backfillMissingCompany());
 $("fillResume").addEventListener("click", () => runAction("FILL_RESUME", {}));
 $("verify").addEventListener("click", () => runAction("VERIFY", {}));
