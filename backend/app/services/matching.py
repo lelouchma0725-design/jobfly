@@ -296,6 +296,8 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
         except Exception:  # noqa: BLE001
             logger.exception("香港公司精細化加權失敗 %s", posting.get("company_name"))
     priority = min(max(fit_score + loc_adj + campus_adjust + org_adj + hk_adj, 50), 100)
+    if contract_penalty:
+        priority = min(priority, 70)  # Contract 優先分同樣封頂 70
     breakdown = scored.get("breakdown") or {}
     breakdown.update({
         "fit_base": fit_score,
