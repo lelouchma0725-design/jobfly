@@ -315,7 +315,7 @@
     if (siteKey === "jobsdb") {
       const jobs = [];
       const seen = new Set();
-      for (const a of anchorsAll.slice(0, 100)) {
+      for (const a of anchorsAll.slice(0, 300)) {
         const href = a.href || "";
         const m = href.match(/\/job\/(\d+)/i);
         const id = m ? "jp" + m[1] : href;
@@ -352,7 +352,7 @@
       }
       return { jobs, count: jobs.length, debug: "" };
     }
-    let cards = Array.from(document.querySelectorAll(conf.card)).slice(0, 100);
+    let cards = Array.from(document.querySelectorAll(conf.card)).slice(0, 300);
     // 通用兜底：按職位詳情鏈接識別卡片（SEEK/JobsDB 等站卡片結構多變）
     if (!cards.length) {
       const anchors = Array.from(document.querySelectorAll("a[href]")).filter((a) =>
@@ -361,7 +361,7 @@
       );
       cards = Array.from(
         new Set(anchors.map((a) => a.closest("article, li, div") || a.parentElement)),
-      ).slice(0, 100);
+      ).slice(0, 300);
       if (cards.length) conf._anchorMode = true;
     }
     const jobs = [];

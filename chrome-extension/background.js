@@ -160,7 +160,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           (async () => {
             const jobs = msg.jobs || [];
             const site = msg.site || "jobsdb";
-            const total = Math.min(jobs.length, 100);
+            const batchMax = Number(msg.batch || 100);
+            const total = Math.min(jobs.length, batchMax);
             const valid = jobs.filter((j) => j.url);
             let tab = null;
             const diag = [];
@@ -184,16 +185,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 if (j.url) {
                   if (!tab) tab = await chrome.tabs.create({ url: j.url, active: true });
                   else await chrome.tabs.update(tab.id, { url: j.url });
-                  await new Promise((r) => setTimeout(r, 10000));
-                  const res = await chrome.scripting.executeScript({
+                  await new Promise((r) => setTimeout(r, 8000));
+                  let res = await chrome.scripting.executeScript({
                     target: { tabId: tab.id },
                     func: () => ({
                       title: (document.querySelector("h1")?.textContent || "").trim().slice(0, 200),
                       detail_text: (document.body.innerText || "").slice(0, 6000),
                     }),
                   });
-                  const d = (res && res[0] && res[0].result) || {};
+                  let d = (res && res[0] && res[0].result) || {};
                   textLen = (d.detail_text || "").length;
+                  // 空文本：等 6 秒重試一次（頁面渲染慢）
+                  if (textLen < 40) {
+                    await new Promise((r) => setTimeout(r, 6000));
+                    res = await chrome.scripting.executeScript({
+                      target: { tabId: tab.id },
+                      func: () => (document.body.innerText || "").slice(0, 6000),
+                    });
+                    const retry = (res && res[0] && res[0].result) || "";
+                    if (retry.length >= 40) {
+                      d = { title: d.title, detail_text: retry };
+                      textLen = retry.length;
+                    }
+                  }
                   if (d.title) title = d.title;
                   diag.push({ i: i + 1, len: textLen, title: title.slice(0, 30) });
                   if (textLen >= 40) {

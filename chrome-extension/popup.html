@@ -57,6 +57,11 @@
       JobsDB / CTgoodjobs / 獵聘 / 前程無憂 / 智聯：先在瀏覽器登錄（或過人機驗證）並打開搜索結果頁
       → 點下方按鈕，把本頁職位（含登錄後可見的薪資）採集入庫。
     </p>
+    <select id="detailBatch" style="width:100%;padding:6px;margin:4px 0">
+      <option value="50">詳情採集批量：50 個/輪（約 9 分鐘）</option>
+      <option value="100" selected>詳情採集批量：100 個/輪（約 18 分鐘）</option>
+      <option value="200">詳情採集批量：200 個/輪（約 36 分鐘）</option>
+    </select>
     <button id="btn-joblist" class="primary">採集本頁職位列表</button>
     <button id="btn-backfill" class="ghost">回填缺失公司名（自動逐頁）</button>
     <h3 style="font-size:13px;margin:10px 0 4px">🎯 投遞任務</h3>

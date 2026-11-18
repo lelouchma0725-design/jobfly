@@ -62,19 +62,26 @@ function isAuthError(e) {
   return !!e && (e.authExpired || String(e.message || e).includes("AUTH_EXPIRED"));
 }
 
-// 後台詳情採集進度顯示（讀取上次狀態 + 進行中輪詢）
+// 後台詳情採集進度顯示：只在消息變化時更新（避免覆蓋用戶操作提示）
+let _lastDetailMsg = "";
+let _detailTimer = null;
 async function showDetailProgress() {
   try {
     const st = await chrome.storage.local.get("jobDetailProgress");
     const p = st.jobDetailProgress;
-    if (p && p.msg) {
+    if (p && p.msg && p.msg !== _lastDetailMsg) {
+      _lastDetailMsg = p.msg;
       $("status").textContent = p.msg;
-      $("status").className = p.done === -1 ? (p.msg.includes("完成") ? "ok" : "err") : "";
+      $("status").className = p.done === -1 ? (p.msg.includes("完成") ? "ok" : "") : "";
+    }
+    if (p && p.done === -1 && _detailTimer) {
+      clearInterval(_detailTimer);
+      _detailTimer = null;
     }
   } catch { /* 忽略 */ }
 }
 void showDetailProgress();
-setInterval(() => void showDetailProgress(), 2000);
+_detailTimer = setInterval(() => void showDetailProgress(), 2000);
 
 chrome.storage.local.get("token").then(({ token }) => {
   if (token) showTasks().catch((e) => isAuthError(e) && showLogin());
@@ -259,7 +266,8 @@ async function collectJobList() {
     const r = await bg("JOB_LIST_INGEST", { site, jobs: all });
     if (r && r.ok) {
       // 自動開始後台詳情採集（逐個點開職位頁採集職責/薪資），彈窗可關閉
-      await bg("JOB_DETAIL_COLLECT", { site, jobs: all });
+      const batch = Number(document.getElementById("detailBatch")?.value || 100);
+      await bg("JOB_DETAIL_COLLECT", { site, jobs: all, batch });
       $("status").textContent =
         `✅ 已入庫 ${r.out.new ?? 0} 個新職位。詳情採集已在後台開始（約 2 分鐘，可關閉本彈窗），完成後到「我的匹配」查看。`;
       $("status").className = "ok";
