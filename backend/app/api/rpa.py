@@ -258,3 +258,72 @@ def job_list_ingest(user: CurrentUser, db: DB, payload: JobListIngestRequest) ->
 
     threading.Thread(target=_score_new, daemon=True).start()
     return {"ok": True, **stats}
+
+class JobDetailIngestRequest(BaseModel):
+    site: str
+    jobs: list[dict]  # [{external_id, url, detail_text}]
+
+
+@router.post("/job-detail-ingest")
+def job_detail_ingest(user: CurrentUser, payload: JobDetailIngestRequest) -> dict:
+    """RPA 逐個點開詳情頁後回傳頁面全文：LLM 抽取公司/實際僱主/薪資/職責/獵頭/合同工，後台更新+重評。"""
+    import threading
+
+    def _process() -> None:
+        from app.core.jsonutil import j
+        from app.db import SessionLocal
+        from app.services.jd_extract import extract_detail
+        from app.services.matching import score_posting
+
+        for item in payload.jobs:
+            s = SessionLocal()
+            try:
+                ext = str(item.get("external_id") or "")
+                text = str(item.get("detail_text") or "")
+                if not ext or len(text) < 40:
+                    continue
+                row = s.execute(
+                    text("SELECT id, company_name, description_text, raw FROM job_postings WHERE source=:src AND external_id=:e"),
+                    {"src": payload.site, "e": ext},
+                ).mappings().first()
+                if not row:
+                    continue
+                d = extract_detail(text, fallback_title=str(item.get("title") or ""))
+                if not d:
+                    continue
+                company = str(d.get("company") or "").strip()
+                employer = str(d.get("actual_employer") or "").strip()
+                desc = str(d.get("description") or "").strip()
+                salary = str(d.get("salary") or "").strip()
+                location = str(d.get("location") or "").strip()
+                raw = row["raw"] or {}
+                if isinstance(raw, str):
+                    from app.core.jsonutil import loads_json
+                    raw = loads_json(raw) or {}
+                new_raw = dict(raw)
+                new_raw["actual_employer"] = employer or new_raw.get("actual_employer", "")
+                new_raw["is_headhunter"] = bool(d.get("is_headhunter"))
+                new_raw["is_contract"] = bool(d.get("is_contract"))
+                new_raw["contract_note"] = str(d.get("contract_note") or "")
+                s.execute(
+                    text(
+                        "UPDATE job_postings SET "
+                        "company_name=CASE WHEN :c != '' THEN :c ELSE company_name END, "
+                        "description_text=CASE WHEN :d != '' AND length(:d) > length(COALESCE(description_text,'')) THEN :d ELSE description_text END, "
+                        "location=CASE WHEN :l != '' AND (location IS NULL OR location='') THEN :l ELSE location END, "
+                        "raw=CAST(:r AS jsonb) WHERE id=:pid"
+                    ),
+                    {"c": company, "d": desc[:6000], "l": location, "r": j(new_raw), "pid": row["id"]},
+                )
+                s.commit()
+                try:
+                    score_posting(s, user["id"], str(row["id"]))
+                except Exception:  # noqa: BLE001
+                    pass
+            except Exception:  # noqa: BLE001
+                s.rollback()
+            finally:
+                s.close()
+
+    threading.Thread(target=_process, daemon=True).start()
+    return {"ok": True, "queued": len(payload.jobs)}

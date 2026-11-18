@@ -279,9 +279,18 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
 
             company = (posting.get("company_name") or "").strip()
             job_hint = f"{posting.get('title') or ''} {posting.get('description_text') or ''}"
-            if company and company not in ("RPA採集", "Jobsdb", "—"):
-                sig = classify_company(db, company, job_hint)
+            # 獵頭發布的崗位：用實際僱主做分類
+            raw = posting.get("raw") or {}
+            if isinstance(raw, str):
+                from app.core.jsonutil import loads_json
+                raw = loads_json(raw) or {}
+            employer = str(raw.get("actual_employer") or "").strip()
+            classify_name = employer or company
+            if classify_name and classify_name not in ("RPA採集", "Jobsdb", "—"):
+                sig = classify_company(db, classify_name, job_hint)
                 hk_adj, hk_detail = hk_adjust(sig)
+                hk_detail["classify_company"] = classify_name
+                hk_detail["is_headhunter"] = bool(raw.get("is_headhunter"))
         except Exception:  # noqa: BLE001
             logger.exception("香港公司精細化加權失敗 %s", posting.get("company_name"))
     priority = min(max(fit_score + loc_adj + campus_adjust + org_adj + hk_adj, 50), 100)

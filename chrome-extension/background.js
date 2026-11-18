@@ -178,15 +178,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     };
                     return {
                       title: t("h1"),
-                      company: t("a[href*='/company']") || t("[data-automation*='advertiser']") || t("[data-automation*='company'], [data-automation*='Company']"),
-                      salary: t("[data-automation*='salary'], [data-automation*='Salary']"),
-                      location: t("[data-automation*='location'], [data-automation*='Location']"),
-                      description: t("[data-automation='jobAdDetails'], [data-automation*='jobDescription'], [data-automation*='description'], div[class*='description'], [class*='jobDescription']"),
+                      detail_text: (document.body.innerText || "").slice(0, 6000),
                     };
                   },
                 });
                 const d = (res && res[0] && res[0].result) || {};
-                enriched.push({ ...j, title: d.title || j.title, company: d.company || j.company || "", salary: d.salary || j.salary || "", location: d.location || j.location || "", description: d.description || j.description || "" });
+                enriched.push({ ...j, title: d.title || j.title, detail_text: d.detail_text || "" });
               } catch (e) {
                 enriched.push(j);
               } finally {
@@ -201,7 +198,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             }
             let out = null;
             try {
-              out = await apiFetch("/api/rpa/job-list-ingest", {
+              out = await apiFetch("/api/rpa/job-detail-ingest", {
                 method: "POST",
                 body: JSON.stringify({ site, jobs: enriched }),
               });
@@ -214,7 +211,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   done: -1,
                   total,
                   msg: out && out.ok
-                    ? `詳情採集完成：${out.new ?? 0} 新 / ${out.updated ?? 0} 更新（自動評分中，稍後查看「我的匹配」）`
+                    ? `詳情採集完成：已回傳 ${out.queued ?? 0} 個詳情頁，後端 AI 正在抽取公司/僱主/薪資並自動評分（約 1-2 分鐘後查看「我的匹配」）`
                     : "詳情回傳失敗: " + (out?.error || ""),
                 },
               });

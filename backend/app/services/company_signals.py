@@ -19,19 +19,19 @@ from app.core.llm import chat_json
 logger = logging.getLogger(__name__)
 
 CLASSIFY_SYSTEM = """你是香港求職市場分析師。根據公司名與崗位信息，輸出 JSON：
-{"company_industry": "tech|finance|insurance|other",
+{"company_industry": "tech|finance|insurance|insurtech|other",
  "size_bucket": "small|medium|large|unknown",
  "job_industry": "tech|finance|insurance|other",
  "company_size_note": "一句話說明規模判斷依據"}
 規則：
 - size_bucket 按員工人數：small=0-50 人；medium=50-200 人；large=200 人以上；無法判斷填 unknown
-- company_industry：保險/經紀行→insurance；銀行/券商/資管/基金/對沖→finance；軟件/互聯網/IT/數據/AI→tech；其他→other
+- company_industry：傳統保險/經紀行→insurance；保險科技(InsurTech)/數字保險→insurtech；銀行/券商/資管/基金/對沖→finance；軟件/互聯網/IT/數據/AI→tech；其他→other
 - job_industry：按崗位標題+職責判斷屬於哪類
 - 只輸出 JSON，不要其他文字"""
 
-SIZE_ADJ = {"small": -5, "medium": 0, "large": 5, "unknown": 0}
-INDUSTRY_ADJ = {"insurance": -6, "tech": 4, "finance": 4, "other": 0}
-ALIGN_ADJ = {"same": 4, "diff": -3, "unknown": 0}
+SIZE_ADJ = {"small": -10, "medium": 0, "large": 10, "unknown": 0}
+INDUSTRY_ADJ = {"insurance": -10, "insurtech": 8, "tech": 8, "finance": 8, "other": 0}
+ALIGN_ADJ = {"same": 6, "diff": -5, "unknown": 0}
 
 
 def classify_company(db: Session, company_name: str, job_hint: str) -> dict:
