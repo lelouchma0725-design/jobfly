@@ -160,7 +160,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           (async () => {
             const jobs = msg.jobs || [];
             const site = msg.site || "jobsdb";
-            const total = Math.min(jobs.length, 20);
+            const total = Math.min(jobs.length, 100);
             const valid = jobs.filter((j) => j.url);
             let tab = null;
             const diag = [];

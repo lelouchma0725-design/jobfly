@@ -279,13 +279,13 @@ def job_detail_ingest(user: CurrentUser, payload: JobDetailIngestRequest) -> dic
     processed = 0
     for item in payload.jobs:
         ext = str(item.get("external_id") or "")
-        text = str(item.get("detail_text") or "")
+        txt = str(item.get("detail_text") or "")
         s = SessionLocal()
         try:
-            if not ext or len(text) < 40:
+            if not ext or len(txt) < 40:
                 s.execute(
                     text("INSERT INTO rpa_detail_log (site, external_id, text_len, status) VALUES (:s, :e, :t, 'empty_text')"),
-                    {"s": payload.site, "e": ext, "t": len(text)},
+                    {"s": payload.site, "e": ext, "t": len(txt)},
                 )
                 s.commit()
                 results.append({"external_id": ext, "status": "empty_text"})
@@ -297,15 +297,15 @@ def job_detail_ingest(user: CurrentUser, payload: JobDetailIngestRequest) -> dic
             if not row:
                 s.execute(
                     text("INSERT INTO rpa_detail_log (site, external_id, text_len, status) VALUES (:s, :e, :t, 'no_row')"),
-                    {"s": payload.site, "e": ext, "t": len(text)},
+                    {"s": payload.site, "e": ext, "t": len(txt)},
                 )
                 s.commit()
                 results.append({"external_id": ext, "status": "no_row"})
                 continue
-            d = extract_detail(text, fallback_title=str(item.get("title") or ""))
+            d = extract_detail(txt, fallback_title=str(item.get("title") or ""))
             s.execute(
                 text("INSERT INTO rpa_detail_log (site, external_id, text_len, extracted, status, error) VALUES (:s, :e, :t, CAST(:d AS jsonb), :st, :er)"),
-                {"s": payload.site, "e": ext, "t": len(text),
+                {"s": payload.site, "e": ext, "t": len(txt),
                  "d": j(d) if d else None,
                  "st": "ok" if d else "llm_fail", "er": None},
             )
