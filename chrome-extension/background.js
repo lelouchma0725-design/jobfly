@@ -156,71 +156,81 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           break;
         }
         case "JOB_DETAIL_COLLECT": {
-          // 後台逐個打開職位詳情頁（每批 5 個同步回傳，彈窗可關閉）
+          // 詳情採集 v2：在可見標籤上順序導航（後台標籤不渲染內容），每頁 10 秒
           (async () => {
             const jobs = msg.jobs || [];
             const site = msg.site || "jobsdb";
             const total = Math.min(jobs.length, 20);
-            let doneAll = 0;
-            const statuses = [];
+            const valid = jobs.filter((j) => j.url);
+            let tab = null;
+            const diag = [];
+            const results = [];
+            try {
+              const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+              tab = (tabs && tabs[0]) || null;
+              if (tab && tab.url && valid[0] && valid[0].url) {
+                await chrome.tabs.update(tab.id, { url: valid[0].url });
+              } else if (valid[0] && valid[0].url) {
+                tab = await chrome.tabs.create({ url: valid[0].url, active: true });
+              }
+            } catch (e) {
+              try { tab = await chrome.tabs.create({ url: valid[0] ? valid[0].url : "about:blank", active: true }); } catch (e2) { /* 忽略 */ }
+            }
             for (let i = 0; i < total; i++) {
               const j = jobs[i];
-              let tab = null;
-              let detailText = "";
+              let textLen = 0;
               let title = j.title || "";
               try {
-                tab = await chrome.tabs.create({ url: j.url, active: false });
-                await new Promise((r) => setTimeout(r, 8000));
-                const res = await chrome.scripting.executeScript({
-                  target: { tabId: tab.id },
-                  func: () => ({
-                    title: (document.querySelector("h1")?.textContent || "").trim().slice(0, 200),
-                    detail_text: (document.body.innerText || "").slice(0, 6000),
-                  }),
-                });
-                const d = (res && res[0] && res[0].result) || {};
-                detailText = d.detail_text || "";
-                if (d.title) title = d.title;
-              } catch (e) {
-                /* 單頁失敗：跳過 */
-              } finally {
-                if (tab) {
-                  try { await chrome.tabs.remove(tab.id); } catch { /* 忽略 */ }
-                }
-              }
-              const batch = [{ ...j, title, detail_text: detailText }];
-              // 每 5 個同步回傳一批（後端同步處理，Render 凍結線程不影響）
-              if (batch[0].detail_text && ((i + 1) % 5 === 0 || i === total - 1)) {
-                try {
-                  const out = await apiFetch("/api/rpa/job-detail-ingest", {
-                    method: "POST",
-                    body: JSON.stringify({ site, jobs: batch }),
+                if (j.url) {
+                  if (!tab) tab = await chrome.tabs.create({ url: j.url, active: true });
+                  else await chrome.tabs.update(tab.id, { url: j.url });
+                  await new Promise((r) => setTimeout(r, 10000));
+                  const res = await chrome.scripting.executeScript({
+                    target: { tabId: tab.id },
+                    func: () => ({
+                      title: (document.querySelector("h1")?.textContent || "").trim().slice(0, 200),
+                      detail_text: (document.body.innerText || "").slice(0, 6000),
+                    }),
                   });
-                  if (out && out.ok) doneAll += out.processed ?? 0;
-                  statuses.push(...(out && out.results ? out.results : []));
-                } catch (e) {
-                  statuses.push({ external_id: j.external_id, status: "error", error: e?.message });
+                  const d = (res && res[0] && res[0].result) || {};
+                  textLen = (d.detail_text || "").length;
+                  if (d.title) title = d.title;
+                  diag.push({ i: i + 1, len: textLen, title: title.slice(0, 30) });
+                  if (textLen >= 40) {
+                    const out = await apiFetch("/api/rpa/job-detail-ingest", {
+                      method: "POST",
+                      body: JSON.stringify({ site, jobs: [{ ...j, title, detail_text: d.detail_text }] }),
+                    });
+                    if (out && out.ok) results.push(...(out.results || []));
+                  }
                 }
+              } catch (e) {
+                diag.push({ i: i + 1, len: 0, err: String(e?.message || e).slice(0, 40) });
               }
               try {
                 await chrome.storage.local.set({
-                  jobDetailProgress: { done: i + 1, total, msg: `詳情採集 ${i + 1}/${total}…（已抽取 ${doneAll}）` },
+                  jobDetailProgress: {
+                    done: i + 1,
+                    total,
+                    msg: `詳情採集 ${i + 1}/${total}…（最近頁文本長度 ${textLen}，標題 ${title.slice(0, 18)}）`,
+                  },
                 });
               } catch { /* 忽略 */ }
-              await new Promise((r) => setTimeout(r, 500));
+              await new Promise((r) => setTimeout(r, 600));
             }
-            const okN = statuses.filter((x) => x && x.status === "ok").length;
+            const okN = results.filter((x) => x && x.status === "ok").length;
+            const lens = diag.map((d) => d.len).join("/");
             try {
               await chrome.storage.local.set({
                 jobDetailProgress: {
                   done: -1,
                   total,
-                  msg: `詳情採集完成：${total} 頁，AI 抽取成功 ${doneAll}，含公司 ${okN}。到「我的匹配」查看（評分已同步完成）。`,
+                  msg: `詳情採集完成：${total} 頁（文本長度 ${lens}），AI 抽取成功 ${okN}。完成後本頁停留在最後一個職位頁。`,
                 },
               });
             } catch { /* 忽略 */ }
           })();
-          sendResponse({ ok: true, started: true });
+          sendResponse({ ok: true, started: true, note: "將在當前標籤順序打開職位詳情頁" });
           break;
         }
         case "JOB_LIST_INGEST": {
