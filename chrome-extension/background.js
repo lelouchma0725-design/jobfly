@@ -196,6 +196,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 } catch { /* 忽略 */ }
               }
             }
+            const lens = enriched.map((x) => (x.detail_text || "").length);
             let out = null;
             try {
               out = await apiFetch("/api/rpa/job-detail-ingest", {
@@ -211,7 +212,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   done: -1,
                   total,
                   msg: out && out.ok
-                    ? `詳情採集完成：已回傳 ${out.queued ?? 0} 個詳情頁，後端 AI 正在抽取公司/僱主/薪資並自動評分（約 1-2 分鐘後查看「我的匹配」）`
+                    ? `詳情採集完成：已回傳 ${out.queued ?? 0} 個詳情頁（文本長度 ${lens.join("/")}），後端 AI 正在抽取並評分（約 1-2 分鐘）`
                     : "詳情回傳失敗: " + (out?.error || ""),
                 },
               });

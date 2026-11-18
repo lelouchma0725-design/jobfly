@@ -281,14 +281,31 @@ def job_detail_ingest(user: CurrentUser, payload: JobDetailIngestRequest) -> dic
                 ext = str(item.get("external_id") or "")
                 text = str(item.get("detail_text") or "")
                 if not ext or len(text) < 40:
+                    s.execute(
+                        text("INSERT INTO rpa_detail_log (site, external_id, text_len, status) VALUES (:s, :e, :t, 'empty_text')"),
+                        {"s": payload.site, "e": ext, "t": len(text)},
+                    )
+                    s.commit()
                     continue
                 row = s.execute(
                     text("SELECT id, company_name, description_text, raw FROM job_postings WHERE source=:src AND external_id=:e"),
                     {"src": payload.site, "e": ext},
                 ).mappings().first()
                 if not row:
+                    s.execute(
+                        text("INSERT INTO rpa_detail_log (site, external_id, text_len, status) VALUES (:s, :e, :t, 'no_row')"),
+                        {"s": payload.site, "e": ext, "t": len(text)},
+                    )
+                    s.commit()
                     continue
                 d = extract_detail(text, fallback_title=str(item.get("title") or ""))
+                s.execute(
+                    text("INSERT INTO rpa_detail_log (site, external_id, text_len, extracted, status, error) VALUES (:s, :e, :t, CAST(:d AS jsonb), :st, :er)"),
+                    {"s": payload.site, "e": ext, "t": len(text),
+                     "d": j(d) if d else None,
+                     "st": "ok" if d else "llm_fail", "er": None},
+                )
+                s.commit()
                 if not d:
                     continue
                 company = str(d.get("company") or "").strip()
