@@ -63,7 +63,11 @@ def _check_against(profile: dict, req: dict) -> bool:
         import re
 
         m = re.search(r"(\d+)", requirement)
-        return years >= int(m.group(1)) if m else True
+        if not m:
+            return True
+        req = int(m.group(1))
+        # 經驗年限寬容 1 年：實習經歷可計入考量，招聘慣例 4+ 年通常可投 5 年要求崗位
+        return years >= req - 1
     if kind == "visa":
         return bool(hard.get("visa_status"))  # 有簽證信息即放行，細粒度在 LLM 評分
     if kind == "language":
