@@ -268,16 +268,31 @@ def score_posting(db: Session, user_id: str, posting_id: str) -> dict:
     # ── 貼合度 = 純個人條件匹配（LLM），不做任何偏好加減 ──
     fit_score = min(max(int(scored["match_score"]), 50), 100)
 
-    # ── 投遞優先級 = 貼合度 + 偏好加權（地區/校招職級/總部分支），只用於排序與投遞選擇 ──
+    # ── 投遞優先級 = 貼合度 + 偏好加權（地區/校招職級/總部分支/公司精細化），只用於排序與投遞選擇 ──
     loc_adj = _location_adjust(db, user_id, posting["location"])
     org_adj = _org_adjust(db, user_id, posting.get("org_level") or "unknown")
-    priority = min(max(fit_score + loc_adj + campus_adjust + org_adj, 50), 100)
+    hk_adj = 0
+    hk_detail = {}
+    if posting.get("source") == "jobsdb":
+        try:
+            from app.services.company_signals import classify_company, hk_adjust
+
+            company = (posting.get("company_name") or "").strip()
+            job_hint = f"{posting.get('title') or ''} {posting.get('description_text') or ''}"
+            if company and company not in ("RPA採集", "Jobsdb", "—"):
+                sig = classify_company(db, company, job_hint)
+                hk_adj, hk_detail = hk_adjust(sig)
+        except Exception:  # noqa: BLE001
+            logger.exception("香港公司精細化加權失敗 %s", posting.get("company_name"))
+    priority = min(max(fit_score + loc_adj + campus_adjust + org_adj + hk_adj, 50), 100)
     breakdown = scored.get("breakdown") or {}
     breakdown.update({
         "fit_base": fit_score,
         "location_adjust": loc_adj,
         "campus_adjust": campus_adjust,
         "org_adjust": org_adj,
+        "hk_adjust": hk_adj,
+        "hk_detail": hk_detail,
     })
 
     db.execute(

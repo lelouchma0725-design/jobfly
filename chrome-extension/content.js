@@ -327,7 +327,19 @@
           const el = card ? card.querySelector(sel) : null;
           return el && el.textContent ? el.textContent.trim().slice(0, 120) : "";
         };
-        const company = findCompany(a) || q("[data-automation*='company'], [data-automation*='Company']");
+        let company = findCompany(a) || q("[data-automation*='company'], [data-automation*='Company']");
+        // 啟發式兜底：卡片容器文本行中，標題之後的第一行 2-40 字符短文本視為公司名
+        if (!company && card) {
+          const lines = (card.textContent || "").split("\n").map((s) => s.trim()).filter(Boolean);
+          const ti = lines.findIndex((l) => l.includes(title.slice(0, 12)));
+          for (let k = ti + 1; k < lines.length; k++) {
+            const l = lines[k];
+            if (l.length >= 2 && l.length <= 40 && !l.includes("HK$") && !/^\d/.test(l)) {
+              company = l;
+              break;
+            }
+          }
+        }
         jobs.push({
           external_id: id,
           title,
